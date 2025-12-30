@@ -1,184 +1,123 @@
-# State Machine Framework v2.0 - Production Ready for Embedded Systems
+# State Machine Framework v2.0
 
-**A truly modular, platform-agnostic state machine framework for C/C++ embedded systems**
+**Production-ready state machine framework for embedded C/C++ systems**
 
-✅ **Actually modular** - Separate core, platform, and application layers
-✅ **Actually portable** - Clean HAL abstraction for any microcontroller
-✅ **Actually thread-safe** - Proper critical sections and volatile qualifiers
-✅ **Actually documented** - Comprehensive Doxygen comments throughout
-✅ **Actually tested** - Builds and runs out of the box
+Truly modular • Platform-agnostic • Thread-safe • Lean footprint (~1.5KB RAM, ~6KB Flash)
 
 ---
 
-## What's New in v2.0
-
-This is a **complete rewrite** addressing all issues found in v1.0:
-
-### Critical Fixes
-- ✅ Fixed hardcoded array sizes (now use configuration constants)
-- ✅ Added `volatile` qualifiers for ISR-accessed data
-- ✅ Fixed broken error recovery (all states can now transition to RECOVERY)
-- ✅ Added C++ compatibility guards (`extern "C"`)
-- ✅ Removed static variables from state callbacks (now properly reentrant)
-- ✅ Fixed configuration file syntax errors
-
-### Architectural Improvements
-- ✅ **Modular file structure** - Core, platform, and app layers separated
-- ✅ **Platform abstraction layer** - Clean HAL interface via weak symbols
-- ✅ **Thread-safe event posting** - Critical sections protect shared data
-- ✅ **CMake build system** - Cross-platform build support
-- ✅ **Working examples** - Both compile and run successfully
-- ✅ **Proper documentation** - Doxygen comments on all APIs
-
----
-
-## Quick Start
-
-### Build and Run (5 minutes)
+## Quick Start (3 Steps)
 
 ```bash
-# Clone repository
-git clone https://github.com/yourorg/State-Machine-Template.git
-cd State-Machine-Template
+# 1. Build
+mkdir build && cd build && cmake .. && make
 
-# Build
-mkdir build && cd build
-cmake ..
-make -j4
-
-# Run examples
+# 2. Run example
 ./examples/basic_example
-./examples/simulation_example
-```
 
-###  Writing Your First Application
+# 3. Use in your project
+```
 
 ```c
 #include "sm_framework/sm_framework.h"
 
-int main(void)
-{
-    /* Initialize framework with UART debug output */
+int main(void) {
     App_Main_Init(COMM_INTERFACE_UART);
-
-    /* Main loop */
     while (1) {
-        App_Main_Task();  /* Execute state machine */
-        delay_ms(10);     /* Match SM_TASK_PERIOD_MS */
+        App_Main_Task();  // Call every 10ms
+        delay_ms(10);
     }
 }
 ```
 
-That's it! The framework handles everything else.
+**That's it!** See [Quick-Guide.md](Quick-Guide.md) for detailed usage.
 
 ---
 
 ## Features
 
 ### State Machine Core
-- **10 Predefined States**: INIT, IDLE, ACTIVE, PROCESSING, COMMUNICATING, MONITORING, CALIBRATING, DIAGNOSTICS, RECOVERY, CRITICAL_ERROR
-- **Event-Driven**: All transitions triggered by events (ISR-safe)
-- **Non-Blocking**: Designed for main loop or RTOS task integration
-- **Configurable Timeouts**: Per-state timeout management with auto-recovery
-- **State Callbacks**: Separate OnEntry, OnState, and OnExit handlers
+- **10 Pre-configured States**: INIT → IDLE → ACTIVE → PROCESSING → COMMUNICATING → MONITORING → CALIBRATING → DIAGNOSTICS → RECOVERY → CRITICAL_ERROR
+- **Event-Driven Architecture**: Thread-safe event posting (ISR-safe)
+- **Non-Blocking Execution**: Designed for main loop or RTOS integration
+- **Automatic Timeouts**: Per-state timeout with configurable recovery
+- **State Callbacks**: OnEntry, OnState, OnExit for each state
 
-### Error Handling System
-- **Three-Tier System**:
-  - **MINOR**: Auto-recovery without state change
-  - **NORMAL**: Managed recovery via RECOVERY state (with retry limit)
-  - **CRITICAL**: System lock requiring manual reset
+### Error Handling (3-Tier System)
+- **MINOR**: Auto-recovery without state change (e.g., lost packet)
+- **NORMAL**: Managed recovery via RECOVERY state with retry limit
+- **CRITICAL**: System lock requiring manual reset/watchdog
 - **Error History**: Circular buffer tracks last 16 errors
-- **Custom Recovery Handlers**: Register your own recovery functions per error code
-- **Complete Recovery Flow**: Actually works now (fixed in v2.0)
+- **Custom Handlers**: Register your own recovery functions
 
 ### Debug System
-- **Multi-Interface Support**: UART, SPI, I2C, USB, RTT (easily extensible)
+- **Multi-Interface**: UART, SPI, I2C, USB, RTT (extensible)
 - **Message Categories**: INIT, RUNTIME, PERIODIC, ERROR, WARNING, INFO
-- **Runtime Enable/Disable**: Individual control over message types
-- **Formatted Output**: Printf-style messages with timestamps
+- **Runtime Control**: Enable/disable message types individually
+- **Printf-Style**: `Debug_SendMessage(DEBUG_MSG_INFO, "Temp: %d", temp)`
 - **Low Overhead**: Messages filtered before formatting
-- **Compile-Time Removal**: DEBUG_LEVEL macro for production builds
+- **Compile-Time Removal**: Set DEBUG_LEVEL to strip messages in production
 
 ### Platform Abstraction
-- **Weak Symbol Pattern**: Default implementations automatically overridden
-- **Minimal Interface**: Only 5 functions required for basic operation
+- **Minimal Interface**: Only 5 functions required
+- **Weak Symbols**: Default implementations automatically overridden
+- **Any MCU**: STM32, ESP32, RP2040, nRF52, AVR, PIC, etc.
 - **Thread-Safe Primitives**: Critical section support for RTOS
-- **Multiple Interfaces**: Support for UART/SPI/I2C/USB/RTT debug output
-- **Platform Guide**: Step-by-step instructions for your chip
 
 ---
 
 ## Architecture
 
-### Directory Structure
-
 ```
-State-Machine-Template/
-├── include/sm_framework/      # Public API headers
-│   ├── sm_framework.h         # Main header (include this)
-│   ├── sm_types.h             # Type definitions
-│   ├── sm_config.h            # Configuration defaults
-│   ├── sm_platform.h          # Platform abstraction interface
+State-Machine-Framework/
+├── include/sm_framework/      # Public API (include this)
+│   ├── sm_framework.h         # Main header
 │   ├── sm_state_machine.h     # State machine API
 │   ├── sm_error_handler.h     # Error handling API
-│   └── sm_debug.h             # Debug system API
+│   ├── sm_debug.h             # Debug system API
+│   ├── sm_platform.h          # Platform HAL interface
+│   ├── sm_types.h             # Type definitions
+│   └── sm_config.h            # Configuration defaults
+│
 ├── src/
-│   ├── core/                  # Platform-independent core
+│   ├── core/                  # Platform-independent
 │   │   ├── sm_state_machine.c
 │   │   ├── sm_error_handler.c
 │   │   └── sm_debug.c
-│   ├── platform/              # Platform abstraction layer
-│   │   └── sm_platform_weak.c # Default implementations (weak symbols)
-│   └── app/                   # Application glue code
-│       └── app_main.c
-├── examples/                  # Example applications
-│   ├── basic_example.c
-│   └── simulation_example.c
+│   ├── platform/              # HAL abstraction
+│   │   └── sm_platform_weak.c # Default (weak) implementations
+│   └── app/
+│       └── app_main.c         # Application glue
+│
+├── examples/                  # Working examples
 ├── config/                    # Configuration templates
-│   └── app_config_template.h
-├── CMakeLists.txt             # Build system
-├── PLATFORM_GUIDE.md          # How to port to your chip
-└── REVIEW_FINDINGS.md         # What was fixed from v1.0
+└── Quick-Guide.md             # Quick reference guide
 ```
 
-### Core Modules
-
-**State Machine (`sm_state_machine.c`)**
-- Executes state callbacks
-- Processes events and transitions
-- Handles timeouts
-- Manages state history
-
-**Error Handler (`sm_error_handler.c`)**
-- Three-tier error classification
-- Automatic and managed recovery
-- Error history tracking
-- Custom recovery handlers
-
-**Debug System (`sm_debug.c`)**
-- Multi-interface output
-- Message filtering
-- Format customization
-- Periodic status reporting
+### Design Principles
+✅ **Separation of Concerns**: Core logic separated from platform/app code
+✅ **Dependency Inversion**: Core depends on abstractions (platform.h), not implementations
+✅ **Single Responsibility**: Each module has one clear purpose
+✅ **Open/Closed**: Extensible via platform layer without modifying framework
 
 ---
 
 ## Porting to Your Platform
 
-### Minimal Implementation (5 functions)
+### Required Functions (Only 5!)
+
+Create `platform_impl.c` with these functions:
 
 ```c
-/* platform_impl.c - Implement these 5 functions */
-
 #include "sm_framework/sm_platform.h"
-#include "your_hal.h"  /* Your MCU's HAL */
+#include "your_mcu_hal.h"
 
-/* 1. Timing */
+// 1. Get millisecond timestamp
 uint32_t Platform_GetTimeMs(void) {
-    return HAL_GetTick();  /* STM32 example */
+    return HAL_GetTick();  // STM32 example
 }
 
-/* 2. Critical sections */
+// 2-3. Thread safety (disable/enable interrupts)
 void Platform_EnterCritical(void) {
     __disable_irq();
 }
@@ -187,9 +126,9 @@ void Platform_ExitCritical(void) {
     __enable_irq();
 }
 
-/* 3. UART for debug output */
+// 4-5. Debug output (UART example)
 bool Platform_UART_Init(void) {
-    /* Init your UART */
+    // Initialize your UART peripheral
     return true;
 }
 
@@ -199,188 +138,213 @@ uint32_t Platform_UART_Send(const uint8_t *data, uint32_t length) {
 }
 ```
 
-**That's it!** Link `platform_impl.c` with the framework and you're done.
+### Platform Examples
 
-See **[PLATFORM_GUIDE.md](PLATFORM_GUIDE.md)** for detailed examples for:
-- STM32 (HAL)
-- ESP32 (ESP-IDF)
-- RP2040 (Pico SDK)
-- FreeRTOS integration
-- Bare metal implementations
+**STM32 with HAL:**
+```c
+uint32_t Platform_GetTimeMs(void) { return HAL_GetTick(); }
+void Platform_EnterCritical(void) { __disable_irq(); }
+void Platform_ExitCritical(void) { __enable_irq(); }
+```
+
+**ESP32 with ESP-IDF:**
+```c
+uint32_t Platform_GetTimeMs(void) {
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+void Platform_EnterCritical(void) { taskENTER_CRITICAL(); }
+void Platform_ExitCritical(void) { taskEXIT_CRITICAL(); }
+```
+
+**RP2040 with Pico SDK:**
+```c
+uint32_t Platform_GetTimeMs(void) {
+    return to_ms_since_boot(get_absolute_time());
+}
+void Platform_EnterCritical(void) { __disable_irq(); }
+void Platform_ExitCritical(void) { __enable_irq(); }
+```
+
+**FreeRTOS:**
+```c
+uint32_t Platform_GetTimeMs(void) {
+    return xTaskGetTickCount() * portTICK_PERIOD_MS;
+}
+void Platform_EnterCritical(void) { taskENTER_CRITICAL(); }
+void Platform_ExitCritical(void) { taskEXIT_CRITICAL(); }
+```
+
+---
+
+## State Machine Flow
+
+```
+                    INIT
+                      │
+            (init complete)
+                      ↓
+   ┌─────────────→  IDLE  ←──────────────┐
+   │                  │                   │
+   │             (start)              (stop)
+   │                  ↓                   │
+   │                ACTIVE ───────────────┤
+   │                  │                   │
+   │           (data ready)               │
+   │                  ↓                   │
+   │             PROCESSING               │
+   │                  │                   │
+   │           (processing done)          │
+   │                  ↓                   │
+   │            COMMUNICATING             │
+   │                  │                   │
+   │            (comm complete)           │
+   │                  ↓                   │
+   │              MONITORING ─────────────┘
+   │                  │
+   │         (any error occurs)
+   │                  ↓
+   └─────────────  RECOVERY
+   (success)          │
+                 (failed/timeout)
+                      ↓
+                CRITICAL_ERROR
+                  (locked)
+```
+
+### Error Recovery Flow
+```
+Minor Error (e.g., lost packet)
+    → Auto-verify channel (3 good msgs in 50ms)
+    → If OK: Continue in current state
+    → If timeout: Escalate to Normal Error
+
+Normal Error (e.g., timeout)
+    → Transition to RECOVERY state
+    → Attempt recovery (max 3 attempts)
+    → If successful: Return to IDLE
+    → If failed: Escalate to Critical Error
+
+Critical Error (e.g., hardware fault)
+    → Immediate transition to CRITICAL_ERROR
+    → System locked (requires reset)
+    → Watchdog should trigger or manual reset
+```
 
 ---
 
 ## Configuration
 
-### Using Configuration Template
+### Using the Template
 
 ```bash
-# 1. Copy template to your project
+# Copy configuration template
 cp config/app_config_template.h your_project/app_config.h
 
-# 2. Edit values
-# Edit app_config.h with your settings
+# Edit values for your project
+# Then include before framework
+```
 
-# 3. Include before framework header
-#include "app_config.h"
+```c
+#include "app_config.h"           // Your custom config
 #include "sm_framework/sm_framework.h"
 ```
 
-### Key Configuration Options
+### Key Options
 
 ```c
-/* State machine tuning */
-#define SM_TASK_PERIOD_MS (10U)          /* How often to call App_Main_Task() */
-#define SM_STATE_TIMEOUT_MS (5000U)      /* Default state timeout */
-#define SM_MAX_STATES (10U)              /* Maximum number of states */
+/* State machine timing */
+#define SM_TASK_PERIOD_MS (10U)          // Task execution period
+#define SM_STATE_TIMEOUT_MS (5000U)      // Default state timeout
 
 /* Error handling */
-#define ERROR_MAX_RECOVERY_ATTEMPTS (3U) /* Recovery retry limit */
-#define ERROR_HISTORY_SIZE (16U)         /* Error history buffer size */
+#define ERROR_MAX_RECOVERY_ATTEMPTS (3U) // Recovery retry limit
+#define ERROR_HISTORY_SIZE (16U)         // Error log entries
 
 /* Debug system */
-#define DEBUG_ENABLE_RUNTIME_MESSAGES (0U)  /* Disable verbose messages */
-#define DEBUG_BUFFER_SIZE (256U)            /* Debug buffer size */
+#define DEBUG_ENABLE_INIT_MESSAGES (1U)     // Startup messages
+#define DEBUG_ENABLE_RUNTIME_MESSAGES (0U)  // Verbose logs (disable for production)
+#define DEBUG_ENABLE_PERIODIC_MESSAGES (1U) // Periodic status
+#define DEBUG_BUFFER_SIZE (256U)            // Debug buffer size
 
-/* Features */
-#define FEATURE_STATISTICS_ENABLED (0U)  /* Disable for production */
-#define FEATURE_ASSERT_ENABLED (1U)      /* Enable for debug builds */
+/* Memory optimization */
+#define FEATURE_STATISTICS_ENABLED (0U)  // Disable for production
+#define FEATURE_ASSERT_ENABLED (1U)      // Enable for debug builds
 ```
 
 ---
 
 ## API Reference
 
-### Initialization
+### Core Functions
 
 ```c
-/* Initialize entire framework */
-bool App_Main_Init(CommInterface_t debug_interface);
+/* Initialize framework */
+bool App_Main_Init(CommInterface_t interface);
 
-/* Execute one iteration (call periodically) */
+/* Execute state machine (call every SM_TASK_PERIOD_MS) */
 void App_Main_Task(void);
 ```
 
-### Event Posting (Thread-Safe)
+### State Machine
 
 ```c
-/* Post event to trigger state transition */
+/* Post event (thread-safe, can call from ISR) */
 bool StateMachine_PostEvent(StateMachineEvent_t event);
-```
 
-**Can be called from interrupts!** Uses critical sections internally.
-
-### State Queries
-
-```c
+/* Query state */
 StateMachineState_t StateMachine_GetCurrentState(void);
 StateMachineState_t StateMachine_GetPreviousState(void);
-uint32_t StateMachine_GetStateTime(void);
-uint32_t StateMachine_GetExecutionCount(void);
+uint32_t StateMachine_GetStateTime(void);  // Time in current state
 ```
 
-### Error Reporting
+### Error Handling
 
 ```c
-/* Report errors with automatic handling */
+/* Report errors */
 ErrorHandler_Report(ERROR_LEVEL_MINOR, ERROR_CODE_COMM_LOST);
 ErrorHandler_Report(ERROR_LEVEL_NORMAL, ERROR_CODE_TIMEOUT);
 ErrorHandler_Report(ERROR_LEVEL_CRITICAL, ERROR_CODE_HARDWARE_FAULT);
 
-/* Check error status */
+/* Query errors */
 bool ErrorHandler_IsCriticalLock(void);
-bool ErrorHandler_GetCurrentError(ErrorInfo_t *error_info);
+bool ErrorHandler_GetCurrentError(ErrorInfo_t *error);
 ```
 
 ### Debug Messages
 
 ```c
-/* Printf-style debug messages */
+/* Printf-style messaging */
 Debug_SendMessage(DEBUG_MSG_INFO, "Temperature: %d C", temp);
 Debug_SendMessage(DEBUG_MSG_ERROR, "Failed: %s", ErrorCodeToString(code));
-Debug_SendMessage(DEBUG_MSG_WARNING, "Low battery: %d%%", level);
+Debug_SendMessage(DEBUG_MSG_WARNING, "Battery low: %d%%", level);
 
-/* Control message types */
-Debug_EnableRuntimeMessages(false);  /* Disable verbose output */
-Debug_EnablePeriodicMessages(true);  /* Enable status updates */
+/* Control output */
+Debug_EnableRuntimeMessages(false);   // Reduce verbosity
+Debug_SetInterface(COMM_INTERFACE_RTT);  // Change output
 ```
 
 ---
 
-## Memory Usage
+## Integration Examples
 
-Typical configuration (16-entry error history, 256-byte debug buffer):
-
-- **RAM**: ~1.5 KB
-  - State machine context: ~400 bytes
-  - Error history: ~320 bytes
-  - State table: ~600 bytes
-  - Debug config: ~100 bytes
-
-- **Flash**: ~6-8 KB (optimized build -Os)
-  - Core state machine: ~2 KB
-  - Error handling: ~2 KB
-  - Debug system: ~2 KB
-  - State callbacks: ~2 KB
-
-Can be reduced further:
-- Set `ERROR_HISTORY_SIZE` to 4 (saves ~240 bytes RAM)
-- Set `DEBUG_BUFFER_SIZE` to 128 (saves ~128 bytes RAM)
-- Disable `FEATURE_STATISTICS_ENABLED` (saves ~100 bytes RAM)
-
----
-
-## Build System
-
-### CMake Options
-
-```bash
-# Platform selection
-cmake .. -DSM_PLATFORM=SIMULATION  # Default (uses weak symbols)
-cmake .. -DSM_PLATFORM=CUSTOM      # Your custom implementation
-
-# Build configuration
-cmake .. -DCMAKE_BUILD_TYPE=Release  # Optimize for size (-Os)
-cmake .. -DCMAKE_BUILD_TYPE=Debug    # Debug symbols
-
-# Features
-cmake .. -DENABLE_STATISTICS=ON   # Enable runtime statistics
-cmake .. -DENABLE_ASSERTS=OFF     # Disable assertions (production)
-cmake .. -DBUILD_EXAMPLES=OFF     # Don't build examples
-```
-
-### Integration with Your Project
-
-```cmake
-# Add as subdirectory
-add_subdirectory(State-Machine-Template)
-
-# Link with your target
-target_link_libraries(your_firmware sm_framework)
-```
-
----
-
-## Examples
-
-### Basic Usage
+### Bare Metal (STM32)
 ```c
-/* examples/basic_example.c */
-#include "sm_framework/sm_framework.h"
-
 int main(void) {
+    HAL_Init();
+    SystemClock_Config();
+
     App_Main_Init(COMM_INTERFACE_UART);
 
     while (1) {
         App_Main_Task();
-        delay_ms(10);
+        HAL_Delay(10);  // 10ms period
     }
 }
 ```
 
-### With FreeRTOS
+### FreeRTOS Task
 ```c
-void AppTask(void *pvParameters) {
+void StateMachineTask(void *pvParameters) {
     App_Main_Init(COMM_INTERFACE_UART);
 
     TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -393,14 +357,75 @@ void AppTask(void *pvParameters) {
 }
 ```
 
-### Posting Events from Interrupts
+### Event Posting from ISR
 ```c
 void Button_IRQHandler(void) {
     if (button_pressed) {
-        StateMachine_PostEvent(EVENT_START);  /* Thread-safe */
+        StateMachine_PostEvent(EVENT_START);  // Thread-safe!
     }
     clear_interrupt_flag();
 }
+
+void UART_RxComplete_Callback(void) {
+    StateMachine_PostEvent(EVENT_DATA_READY);
+}
+```
+
+---
+
+## Memory Usage
+
+**Typical Configuration** (16 error history, 256-byte debug buffer):
+
+| Component | RAM | Flash |
+|-----------|-----|-------|
+| State machine context | ~400 bytes | ~2 KB |
+| Error handler | ~320 bytes | ~2 KB |
+| State table | ~600 bytes | ~2 KB |
+| Debug system | ~100 bytes | ~2 KB |
+| **Total** | **~1.5 KB** | **~6-8 KB** |
+
+**Optimization Tips:**
+- Reduce `ERROR_HISTORY_SIZE` to 4 (saves ~240 bytes RAM)
+- Reduce `DEBUG_BUFFER_SIZE` to 128 (saves ~128 bytes RAM)
+- Disable `FEATURE_STATISTICS_ENABLED` (saves ~100 bytes RAM)
+- Use `-Os` optimization (reduces Flash by 20-30%)
+
+---
+
+## Build System
+
+### CMake Options
+
+```bash
+# Platform selection
+cmake .. -DSM_PLATFORM=SIMULATION  # Default (uses weak symbols)
+cmake .. -DSM_PLATFORM=CUSTOM      # Your platform implementation
+
+# Build configuration
+cmake .. -DCMAKE_BUILD_TYPE=Release  # Optimize for size (-Os)
+cmake .. -DCMAKE_BUILD_TYPE=Debug    # Debug symbols
+
+# Feature flags
+cmake .. -DENABLE_STATISTICS=ON   # Runtime statistics
+cmake .. -DENABLE_ASSERTS=OFF     # Disable assertions
+cmake .. -DBUILD_EXAMPLES=OFF     # Skip examples
+```
+
+### Integration
+
+**Add to your CMake project:**
+```cmake
+add_subdirectory(path/to/State-Machine-Framework)
+target_link_libraries(your_firmware sm_framework)
+```
+
+**Or use as library:**
+```bash
+cd State-Machine-Framework
+mkdir build && cd build
+cmake .. && make
+# Link with libsm_framework.a
 ```
 
 ---
@@ -409,68 +434,136 @@ void Button_IRQHandler(void) {
 
 ### Run Examples
 ```bash
-cd build
 ./examples/basic_example        # Basic demonstration
 ./examples/simulation_example   # Advanced testing
 ```
 
-### Add Custom Tests
-```bash
-cmake .. -DBUILD_TESTS=ON
-make
-ctest
+### Expected Output
+```
+[1] === State Machine Framework v2.0.0 ===
+[2] Initializing...
+[14] Initialization complete after 5 steps
+[16] Event INIT_COMPLETE triggers transition INIT -> IDLE
+[38] Event START triggers transition IDLE -> ACTIVE
+✓ State transitions working
 ```
 
 ---
 
-## Migration from v1.0
+## What's New in v2.0
 
-If you're using the old version, see **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)** for:
-- Complete list of fixes (30+ issues resolved)
-- Breaking changes
-- Migration guide
+**Complete rewrite from v1.0** - See `docs/REVIEW_FINDINGS.md` for details.
 
-**Major Changes:**
-- File structure completely reorganized
-- Configuration system redesigned
-- All critical bugs fixed
-- Platform abstraction layer added
+### Critical Fixes
+- ✅ Fixed hardcoded array sizes (now use config constants)
+- ✅ Added `volatile` for ISR-shared data (proper thread safety)
+- ✅ Fixed broken error recovery (all states can now recover)
+- ✅ Added C++ compatibility (`extern "C"` guards)
+- ✅ Removed static variables from callbacks (now reentrant)
+
+### Major Improvements
+- ✅ Fully modular architecture (core/platform/app separation)
+- ✅ Platform abstraction layer with weak symbols
+- ✅ Thread-safe event posting with critical sections
+- ✅ Professional CMake build system
+- ✅ Comprehensive Doxygen documentation
+- ✅ Working, tested examples
 
 ---
 
-## Contributing
+## Troubleshooting
 
-This framework is production-ready and actively maintained.
+### Build Issues
+```bash
+# Missing headers
+export C_INCLUDE_PATH=/path/to/include:$C_INCLUDE_PATH
 
-**Found a bug?** Open an issue with:
-- Platform/chip you're using
-- Build configuration
-- Minimal reproduction steps
+# Link errors
+# Make sure you link with sm_framework library
+target_link_libraries(your_target sm_framework)
+```
 
-**Want a feature?** Propose it with:
-- Use case description
-- Why it can't be done with current API
-- Proposed API design
+### Runtime Issues
+
+**State machine not transitioning:**
+- Check event is posted: `StateMachine_PostEvent()` returns true
+- Verify transition exists in state table
+- Ensure `App_Main_Task()` is called regularly
+- Check if critical error lock is active
+
+**Debug messages not appearing:**
+- Verify `Platform_UART_Init()` succeeded
+- Check message type is enabled: `Debug_EnableRuntimeMessages(true)`
+- Confirm UART baud rate matches your terminal
+- Verify pins are configured correctly
+
+**System stuck in recovery:**
+- Check error retry count: `ERROR_MAX_RECOVERY_ATTEMPTS`
+- Verify recovery logic for specific error type
+- Ensure timeout is reasonable (default 2s)
+- Check if error is being continuously reported
+
+---
+
+## Best Practices
+
+### ✅ DO:
+- Call `App_Main_Task()` every `SM_TASK_PERIOD_MS` milliseconds
+- Post events from interrupts (it's thread-safe)
+- Use timeouts for all states that can block
+- Disable verbose debug messages in production
+- Feed watchdog in main loop (not in critical error state)
+- Keep state callbacks short and non-blocking
+
+### ❌ DON'T:
+- Block in state callbacks (no `delay()` or infinite loops)
+- Post multiple events rapidly (only one pending allowed)
+- Modify state machine context directly (use API functions)
+- Ignore minor errors (they may indicate issues)
+- Leave all debug messages enabled in production
+- Attempt automatic recovery from critical errors
+
+---
+
+## Support
+
+**Documentation:**
+- [Quick-Guide.md](Quick-Guide.md) - Quick reference and examples
+- `include/sm_framework/*.h` - API documentation (Doxygen)
+- `examples/` - Working code examples
+
+**Platform Porting:**
+- See [Quick-Guide.md](Quick-Guide.md) - Platform Implementation section
+- Default weak implementations in `src/platform/sm_platform_weak.c`
+- Override only what you need
+
+**Issues:**
+- Check examples compile and run first
+- Verify platform functions are implemented
+- Enable debug messages to trace execution
 
 ---
 
 ## License
 
-MIT License - Use freely in commercial and open-source projects.
+MIT License - Free for commercial and open-source projects.
 
 ---
 
-## Credits
+## Version History
 
-**Version 2.0** - Complete rewrite for modularity and portability
-**Version 1.0** - Initial concept and state machine design
+**v2.0.0** (2025-12-30)
+- Complete framework rewrite for modularity and portability
+- Fixed 30+ issues from v1.0
+- Added platform abstraction layer
+- Professional build system
+- Comprehensive documentation
+- Working examples
 
-Built with embedded systems best practices:
-- Non-blocking design
-- Minimal RAM/Flash footprint
-- MISRA-C compatible (configurable)
-- Production-tested architecture
+**v1.0.0** (2025-10-25)
+- Initial release
+- Basic state machine implementation
 
 ---
 
-**Ready to use in your project? Start with the [Quick Start](#quick-start) above!**
+**Built for embedded systems. Designed for reliability. Ready for production.**
