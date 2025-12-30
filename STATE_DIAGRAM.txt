@@ -1,0 +1,367 @@
+STATE MACHINE TRANSITION DIAGRAM
+=================================
+
+Legend:
+  [STATE] = State name
+  -> = Transition arrow
+  (EVENT) = Triggering event
+  * = Initial state
+  ! = Critical error state (locked)
+
+
+                                    ┌─────────────────┐
+                                    │ *[INIT]         │
+                                    │                 │
+                                    │ On Entry:       │
+                                    │  - System setup │
+                                    │                 │
+                                    │ On State:       │
+                                    │  - Self tests   │
+                                    │  - Load config  │
+                                    │                 │
+                                    │ Timeout: 5000ms │
+                                    └────────┬────────┘
+                                             │
+                                             │ (EVENT_INIT_COMPLETE)
+                                             ▼
+                      ┌────────────────────────────────────────┐
+                      │            [IDLE]                       │
+                      │                                         │
+                      │ On Entry:                               │
+                      │  - Enter low power mode (if enabled)    │
+                      │                                         │
+                      │ On State:                               │
+                      │  - Wait for events                      │
+                      │                                         │
+                      │ Timeout: None                           │
+                      └──────┬──────────────────────────────┬───┘
+                             │                              │
+                             │ (EVENT_START)                │ (EVENT_STOP)
+                             ▼                              │
+                      ┌──────────────┐                      │
+                      │   [ACTIVE]   │                      │
+                      │              │◄─────────────────────┤
+                      │ On State:    │                      │
+                      │  - Monitor   │                      │
+                      │  - Poll data │                      │
+                      └──────┬───────┘                      │
+                             │                              │
+                             │ (EVENT_DATA_READY)           │
+                             ▼                              │
+                      ┌──────────────┐                      │
+                      │ [PROCESSING] │                      │
+                      │              │                      │
+                      │ On State:    │                      │
+                      │  - Process   │                      │
+                      │  - Calculate │                      │
+                      │              │                      │
+                      │ Timeout: 3s  │                      │
+                      └──────┬───────┘                      │
+                             │                              │
+                             │ (EVENT_PROCESSING_DONE)      │
+                             ▼                              │
+                   ┌──────────────────┐                     │
+                   │ [COMMUNICATING]  │                     │
+                   │                  │                     │
+                   │ On State:        │                     │
+                   │  - TX/RX data    │                     │
+                   │  - Verify comm   │                     │
+                   │                  │                     │
+                   │ Timeout: 100ms   │                     │
+                   └────────┬─────────┘                     │
+                            │                               │
+                            │ (EVENT_COMM_COMPLETE)         │
+                            ▼                               │
+                   ┌──────────────────┐                     │
+                   │   [MONITORING]   │                     │
+                   │                  │                     │
+                   │ On State:        │                     │
+                   │  - Health check  │                     │
+                   │  - Monitor temp  │                     │
+                   │  - Check status  │                     │
+                   └──┬────────┬──────┘                     │
+                      │        │                            │
+        (EVENT_START) │        │ (EVENT_DATA_READY)        │
+                      │        │                            │
+                      ▼        └────────────────────────────┘
+         ┌──────────────────┐                 │
+         │  [CALIBRATING]   │                 │
+         │                  │                 │
+         │ On State:        │                 │
+         │  - Run cal       │                 │
+         │  - Adjust offset │                 │
+         │                  │                 │
+         │ Timeout: 5s      │                 │
+         └────────┬─────────┘                 │
+                  │                           │
+                  │ (EVENT_PROCESSING_DONE)   │
+                  ▼                           │
+         ┌──────────────────┐                 │
+         │  [DIAGNOSTICS]   │                 │
+         │                  │                 │
+         │ On State:        │                 │
+         │  - Self test     │                 │
+         │  - Check memory  │                 │
+         │                  │                 │
+         │ Timeout: 2s      │                 │
+         └────────┬─────────┘                 │
+                  │                           │
+                  │ (EVENT_PROCESSING_DONE)   │
+                  └────────────┬──────────────┘
+                               │
+                               ▼
+                        ┌────────────┐
+                        │  [ACTIVE]  │
+                        └────────────┘
+
+
+ERROR HANDLING PATHS:
+=====================
+
+    Any State with Normal Error
+            │
+            │ (EVENT_ERROR_NORMAL)
+            ▼
+    ┌────────────────┐
+    │   [RECOVERY]   │
+    │                │
+    │ On State:      │
+    │  - Attempt fix │
+    │  - Retry ops   │
+    │  - Check status│
+    │                │
+    │ Timeout: 2s    │
+    └───┬────────┬───┘
+        │        │
+        │        │ (EVENT_RECOVERY_SUCCESS)
+        │        └─────────────────────────┐
+        │                                  │
+        │ (EVENT_RECOVERY_FAILED)          ▼
+        │ or TIMEOUT                  [IDLE]
+        ▼
+    ┌────────────────────────┐
+    │ ![CRITICAL_ERROR]      │
+    │                        │◄─────────── All states can jump here
+    │ On Entry:              │             with EVENT_ERROR_CRITICAL
+    │  - Enter safe mode     │
+    │  - Disable outputs     │
+    │  - Log error           │
+    │                        │
+    │ On State:              │
+    │  - Wait for reset      │
+    │  - No auto recovery    │
+    │                        │
+    │ NO TIMEOUT             │
+    │ NO TRANSITIONS OUT     │
+    └────────────────────────┘
+         │
+         │ System locked - requires:
+         │  • Manual reset
+         │  • Watchdog timeout
+         │  • Power cycle
+         └────────────────────
+
+
+MINOR ERROR HANDLING:
+=====================
+
+    Minor errors (like lost packets) are handled in-place without state transition:
+    
+    [COMMUNICATING] ─(lost packet)─> Report ERROR_LEVEL_MINOR
+                                     │
+                                     ▼
+                              Attempt verification
+                              (3 good msgs in 50ms)
+                                     │
+                                ┌────┴────┐
+                                │         │
+                         Success│         │Timeout
+                                │         │
+                                ▼         ▼
+                         Auto-recover   Escalate to
+                         Continue       Normal Error
+                                           │
+                                           ▼
+                                    Transition to
+                                      [RECOVERY]
+
+
+STATE ENTRY/EXIT FLOW:
+======================
+
+    When transitioning from STATE_A to STATE_B:
+    
+    1. STATE_A OnExit() is called
+    2. State variables updated (previous_state, current_state)
+    3. state_changed flag set to true
+    
+    Next execution cycle:
+    
+    4. STATE_B OnEntry() is called
+    5. state_changed flag cleared
+    6. state_entry_time updated
+    7. state_execution_count reset to 0
+    8. STATE_B OnState() executes
+    
+    Subsequent cycles:
+    
+    9. STATE_B OnState() continues to execute
+    10. state_execution_count increments
+    11. Timeout checking occurs
+    12. Event processing occurs
+
+
+EVENT PROCESSING:
+=================
+
+    Events are processed atomically:
+    
+    StateMachine_PostEvent(EVENT_X)
+           │
+           ▼
+    Check if event queue empty
+           │
+       ┌───┴───┐
+       │       │
+    Yes│       │No
+       │       │
+       ▼       ▼
+    Accept   Drop event
+    event    (log warning)
+       │
+       └─────────────────┐
+                         │
+    Next execution:      │
+                         │
+    StateMachine_Execute()
+           │
+           ▼
+    Execute OnState()
+           │
+           ▼
+    Check for pending event
+           │
+       ┌───┴───────┐
+       │           │
+    Event│          │No event
+    exists│         │
+       │           │
+       ▼           ▼
+    Lookup        Continue
+    transition    in state
+    table
+       │
+       ▼
+    Valid
+    transition?
+       │
+   ┌───┴───┐
+   │       │
+Yes│       │No
+   │       │
+   ▼       ▼
+Perform  Ignore
+OnExit   event
+   │
+   ▼
+Update
+state
+   │
+   ▼
+Set
+state_changed
+flag
+
+
+TIMEOUT HANDLING:
+=================
+
+    Each state can have a configured timeout:
+    
+    State entered (OnEntry called)
+           │
+           ▼
+    state_entry_time = GetCurrentTimeMs()
+           │
+           │
+    During each OnState() execution:
+           │
+           ▼
+    if (IsTimeout(state_entry_time, timeout_ms))
+           │
+       ┌───┴────┐
+       │        │
+    Yes│        │No
+       │        │
+       ▼        ▼
+    Post       Continue
+    EVENT_     execution
+    TIMEOUT
+       │
+       └───────────────┐
+                       │
+    Next cycle:        │
+                       │
+    Process EVENT_TIMEOUT event
+    according to transition table
+
+
+TYPICAL OPERATION SEQUENCE:
+===========================
+
+    Power On
+       │
+       ▼
+    [INIT] ─────────── Run initialization
+       │               Self-tests, config load
+       │               Timeout: 5s
+       │
+       ▼
+    [IDLE] ─────────── Wait for start command
+       │               Low power mode
+       │
+       │ (User command)
+       ▼
+    [ACTIVE] ──────── Monitor for data
+       │               Poll sensors
+       │
+       │ (Data available)
+       ▼
+    [PROCESSING] ──── Process data
+       │               Run algorithms
+       │               Timeout: 3s
+       │
+       ▼
+    [COMMUNICATING] ─ Send results
+       │               TX/RX packets
+       │               Timeout: 100ms
+       │
+       ▼
+    [MONITORING] ──── Health check
+       │               Temperature check
+       │               System status
+       │
+       └──────────────→ Loop back to ACTIVE/IDLE
+
+
+CONFIGURATION GUIDELINES:
+=========================
+
+State Timeouts:
+  • Fast states (COMMUNICATING): 100-500ms
+  • Normal states (PROCESSING): 1-5s
+  • Slow states (CALIBRATING): 5-10s
+  • No timeout (IDLE, MONITORING): 0
+
+Execution Period (SM_TASK_PERIOD_MS):
+  • Real-time systems: 1-10ms
+  • General purpose: 10-100ms
+  • Battery powered: 100-1000ms
+
+Error Recovery:
+  • ERROR_MAX_RECOVERY_ATTEMPTS: 3-5
+  • ERROR_MINOR_TIMEOUT_MS: 50-200ms
+  • Recovery state timeout: 2-5s
+
+
+END OF STATE DIAGRAM

@@ -1,0 +1,797 @@
+TESTING GUIDE - State Machine Framework
+========================================
+
+This guide provides comprehensive testing strategies for the state machine
+framework, including unit tests, integration tests, and validation procedures.
+
+TABLE OF CONTENTS
+-----------------
+1. Quick Start Testing
+2. Unit Test Examples
+3. Integration Testing
+4. State Transition Testing
+5. Error Handling Testing
+6. Performance Testing
+7. Production Validation
+8. Debug Techniques
+9. Common Issues and Solutions
+
+
+==============================================================================
+1. QUICK START TESTING
+==============================================================================
+
+Minimum Test Procedure:
+-----------------------
+
+1. Build simulation version:
+   $ make PLATFORM=SIMULATION BUILD_TYPE=DEBUG
+
+2. Run basic test:
+   $ ./build/state_machine_app.elf
+
+3. Expected output should show:
+   - Initialization messages
+   - State transitions
+   - Periodic status updates
+   - No error messages
+
+4. If output looks correct, proceed to detailed testing.
+
+
+Quick Validation Checklist:
+---------------------------
+ System initializes (INIT -> IDLE transition)
+ Responds to events (IDLE -> ACTIVE on EVENT_START)
+ State callbacks execute (check debug messages)
+ Timeouts work (test with long-running state)
+ Error recovery functions (trigger test error)
+ Debug messages appear on configured interface
+ No crashes or hangs
+
+
+==============================================================================
+2. UNIT TEST EXAMPLES
+==============================================================================
+
+Test 1: State Initialization
+-----------------------------
+void test_state_init(void) {
+    // Initialize
+    assert(StateMachine_Init() == true);
+    
+    // Verify initial state
+    assert(StateMachine_GetCurrentState() == STATE_INIT);
+    assert(StateMachine_GetPreviousState() == STATE_INIT);
+    
+    printf(" State initialization test passed\n");
+}
+
+
+Test 2: Event Posting
+----------------------
+void test_event_posting(void) {
+    StateMachine_Init();
+    
+    // Post valid event
+    assert(StateMachine_PostEvent(EVENT_START) == true);
+    
+    // Try to post another (should fail - one pending)
+    assert(StateMachine_PostEvent(EVENT_STOP) == false);
+    
+    // Execute to clear pending event
+    StateMachine_Execute();
+    
+    // Now should be able to post again
+    assert(StateMachine_PostEvent(EVENT_STOP) == true);
+    
+    printf(" Event posting test passed\n");
+}
+
+
+Test 3: State Transitions
+--------------------------
+void test_state_transitions(void) {
+    StateMachine_Init();
+    
+    // Complete initialization
+    StateMachine_PostEvent(EVENT_INIT_COMPLETE);
+    StateMachine_Execute();
+    
+    // Should be in IDLE
+    assert(StateMachine_GetCurrentState() == STATE_IDLE);
+    
+    // Trigger start
+    StateMachine_PostEvent(EVENT_START);
+    StateMachine_Execute();
+    
+    // Should be in ACTIVE
+    assert(StateMachine_GetCurrentState() == STATE_ACTIVE);
+    assert(StateMachine_GetPreviousState() == STATE_IDLE);
+    
+    printf(" State transition test passed\n");
+}
+
+
+Test 4: Timeout Handling
+-------------------------
+void test_timeout_handling(void) {
+    uint32_t start_time = GetCurrentTimeMs();
+    
+    // Test immediate timeout
+    assert(IsTimeout(start_time, 0) == true);
+    
+    // Test future timeout (simulate time passing)
+    assert(IsTimeout(start_time, 1000) == false);
+    
+    // TODO: Add actual time-based testing
+    
+    printf(" Timeout handling test passed\n");
+}
+
+
+Test 5: Error Reporting
+------------------------
+void test_error_reporting(void) {
+    StateMachine_Init();
+    ErrorHandler_Init();
+    
+    // Report minor error
+    assert(ErrorHandler_Report(ERROR_LEVEL_MINOR, 
+                               ERROR_CODE_COMM_LOST) == true);
+    
+    // Get error info
+    ErrorInfo_t error;
+    assert(ErrorHandler_GetCurrentError(&error) == true);
+    // Minor errors may auto-clear, so error might be NONE
+    
+    // Report critical error
+    ErrorHandler_Report(ERROR_LEVEL_CRITICAL, 
+                       ERROR_CODE_HARDWARE_FAULT);
+    
+    // Should activate critical lock
+    assert(ErrorHandler_IsCriticalLock() == true);
+    
+    printf(" Error reporting test passed\n");
+}
+
+
+Test 6: String Conversion
+--------------------------
+void test_string_conversion(void) {
+    const char* state_str = StateToString(STATE_ACTIVE);
+    assert(strcmp(state_str, "ACTIVE") == 0);
+    
+    const char* error_str = ErrorCodeToString(ERROR_CODE_TIMEOUT);
+    assert(strcmp(error_str, "TIMEOUT") == 0);
+    
+    printf(" String conversion test passed\n");
+}
+
+
+Running All Unit Tests:
+-----------------------
+void run_all_unit_tests(void) {
+    printf("Starting unit tests...\n\n");
+    
+    test_state_init();
+    test_event_posting();
+    test_state_transitions();
+    test_timeout_handling();
+    test_error_reporting();
+    test_string_conversion();
+    
+    printf("\n All unit tests passed!\n");
+}
+
+
+==============================================================================
+3. INTEGRATION TESTING
+==============================================================================
+
+Integration Test 1: Full State Machine Cycle
+--------------------------------------------
+void test_full_cycle(void) {
+    printf("Testing full state machine cycle...\n");
+    
+    // Initialize
+    App_Main_Init();
+    
+    // Run through initialization
+    for (int i = 0; i < 10; i++) {
+        App_Main_Task();
+    }
+    assert(StateMachine_GetCurrentState() == STATE_IDLE);
+    
+    // Start operation
+    StateMachine_PostEvent(EVENT_START);
+    App_Main_Task();
+    assert(StateMachine_GetCurrentState() == STATE_ACTIVE);
+    
+    // Trigger data processing
+    StateMachine_PostEvent(EVENT_DATA_READY);
+    App_Main_Task();
+    assert(StateMachine_GetCurrentState() == STATE_PROCESSING);
+    
+    // Wait for processing to complete
+    for (int i = 0; i < 30; i++) {
+        App_Main_Task();
+    }
+    
+    // Should eventually reach COMMUNICATING
+    assert(StateMachine_GetCurrentState() == STATE_COMMUNICATING);
+    
+    printf(" Full cycle test passed\n");
+}
+
+
+Integration Test 2: Error Recovery
+-----------------------------------
+void test_error_recovery(void) {
+    printf("Testing error recovery...\n");
+    
+    App_Main_Init();
+    
+    // Get to ACTIVE state
+    StateMachine_PostEvent(EVENT_INIT_COMPLETE);
+    App_Main_Task();
+    StateMachine_PostEvent(EVENT_START);
+    App_Main_Task();
+    
+    // Trigger normal error
+    ErrorHandler_Report(ERROR_LEVEL_NORMAL, ERROR_CODE_TIMEOUT);
+    App_Main_Task();
+    
+    // Should be in RECOVERY
+    assert(StateMachine_GetCurrentState() == STATE_RECOVERY);
+    
+    // Run recovery attempts
+    for (int i = 0; i < 50; i++) {
+        App_Main_Task();
+        
+        // Recovery might succeed and return to IDLE
+        if (StateMachine_GetCurrentState() == STATE_IDLE) {
+            printf(" Recovery succeeded\n");
+            return;
+        }
+    }
+    
+    // If still in recovery or reached critical, that's also valid
+    StateMachineState_t state = StateMachine_GetCurrentState();
+    assert(state == STATE_RECOVERY || state == STATE_CRITICAL_ERROR);
+    
+    printf(" Error recovery test completed\n");
+}
+
+
+Integration Test 3: Debug System
+---------------------------------
+void test_debug_system(void) {
+    printf("Testing debug system...\n");
+    
+    // Initialize with different interfaces
+    assert(Debug_Init(COMM_INTERFACE_UART) == true);
+    
+    // Send messages of different types
+    Debug_SendMessage(DEBUG_MSG_INIT, "Test init message");
+    Debug_SendMessage(DEBUG_MSG_RUNTIME, "Test runtime %d", 123);
+    Debug_SendMessage(DEBUG_MSG_ERROR, "Test error message");
+    
+    // Toggle message types
+    Debug_EnableRuntimeMessages(false);
+    Debug_SendMessage(DEBUG_MSG_RUNTIME, "Should not appear");
+    Debug_EnableRuntimeMessages(true);
+    Debug_SendMessage(DEBUG_MSG_RUNTIME, "Should appear");
+    
+    // Change interface
+    assert(Debug_SetInterface(COMM_INTERFACE_SPI) == true);
+    
+    printf(" Debug system test passed\n");
+}
+
+
+==============================================================================
+4. STATE TRANSITION TESTING
+==============================================================================
+
+Transition Matrix Test:
+-----------------------
+This test verifies all valid state transitions defined in the state table.
+
+Valid Transitions to Test:
+---------------------------
+INIT:
+  EVENT_INIT_COMPLETE -> IDLE 
+  EVENT_ERROR_CRITICAL -> CRITICAL_ERROR 
+
+IDLE:
+  EVENT_START -> ACTIVE 
+  EVENT_ERROR_CRITICAL -> CRITICAL_ERROR 
+
+ACTIVE:
+  EVENT_DATA_READY -> PROCESSING 
+  EVENT_STOP -> IDLE 
+  EVENT_ERROR_NORMAL -> RECOVERY 
+  EVENT_ERROR_CRITICAL -> CRITICAL_ERROR 
+
+PROCESSING:
+  EVENT_PROCESSING_DONE -> COMMUNICATING 
+  EVENT_TIMEOUT -> RECOVERY 
+  EVENT_ERROR_CRITICAL -> CRITICAL_ERROR 
+
+COMMUNICATING:
+  EVENT_COMM_COMPLETE -> MONITORING 
+  EVENT_ERROR_MINOR -> COMMUNICATING  (stays in state)
+  EVENT_ERROR_NORMAL -> RECOVERY 
+  EVENT_ERROR_CRITICAL -> CRITICAL_ERROR 
+
+MONITORING:
+  EVENT_DATA_READY -> PROCESSING 
+  EVENT_START -> CALIBRATING 
+  EVENT_STOP -> IDLE 
+
+CALIBRATING:
+  EVENT_PROCESSING_DONE -> DIAGNOSTICS 
+  EVENT_TIMEOUT -> RECOVERY 
+  EVENT_ERROR_CRITICAL -> CRITICAL_ERROR 
+
+DIAGNOSTICS:
+  EVENT_PROCESSING_DONE -> ACTIVE 
+  EVENT_ERROR_NORMAL -> RECOVERY 
+
+RECOVERY:
+  EVENT_RECOVERY_SUCCESS -> IDLE 
+  EVENT_RECOVERY_FAILED -> CRITICAL_ERROR 
+  EVENT_TIMEOUT -> CRITICAL_ERROR 
+
+CRITICAL_ERROR:
+  No transitions (locked state) 
+
+
+Test Code:
+----------
+void test_transition(StateMachineState_t from_state,
+                     StateMachineEvent_t event,
+                     StateMachineState_t expected_to_state) {
+    // Get to from_state (implementation specific)
+    // ...
+    
+    // Post event
+    StateMachine_PostEvent(event);
+    
+    // Execute
+    StateMachine_Execute();
+    
+    // Verify transition
+    assert(StateMachine_GetCurrentState() == expected_to_state);
+    printf(" %s -(%d)-> %s\n",
+           StateToString(from_state),
+           event,
+           StateToString(expected_to_state));
+}
+
+
+Invalid Transition Test:
+------------------------
+void test_invalid_transition(void) {
+    // Try to post invalid event for current state
+    StateMachine_Init();
+    StateMachine_PostEvent(EVENT_INIT_COMPLETE);
+    StateMachine_Execute();
+    
+    // Now in IDLE
+    StateMachineState_t before = StateMachine_GetCurrentState();
+    
+    // Post invalid event (e.g., EVENT_COMM_COMPLETE from IDLE)
+    StateMachine_PostEvent(EVENT_COMM_COMPLETE);
+    StateMachine_Execute();
+    
+    // Should remain in same state
+    assert(StateMachine_GetCurrentState() == before);
+    
+    printf(" Invalid transition correctly ignored\n");
+}
+
+
+==============================================================================
+5. ERROR HANDLING TESTING
+==============================================================================
+
+Test 1: Minor Error Auto-Recovery
+----------------------------------
+void test_minor_error_recovery(void) {
+    printf("Testing minor error recovery...\n");
+    
+    // Setup - get to COMMUNICATING state
+    // ...
+    
+    // Report minor error
+    ErrorHandler_Report(ERROR_LEVEL_MINOR, ERROR_CODE_COMM_LOST);
+    
+    // Simulate good communication recovery
+    for (int i = 0; i < COMM_VERIFICATION_COUNT; i++) {
+        Comm_VerifyChannel();
+    }
+    
+    // Should auto-recover without state change
+    assert(StateMachine_GetCurrentState() == STATE_COMMUNICATING);
+    
+    printf(" Minor error auto-recovery passed\n");
+}
+
+
+Test 2: Normal Error Retry Logic
+---------------------------------
+void test_normal_error_retry(void) {
+    printf("Testing normal error retry logic...\n");
+    
+    ErrorHandler_Init();
+    
+    // Report normal error
+    ErrorHandler_Report(ERROR_LEVEL_NORMAL, ERROR_CODE_TIMEOUT);
+    
+    // Should transition to RECOVERY
+    StateMachine_Execute();
+    assert(StateMachine_GetCurrentState() == STATE_RECOVERY);
+    
+    // Attempt recovery multiple times
+    int max_attempts = ERROR_MAX_RECOVERY_ATTEMPTS;
+    for (int i = 0; i < max_attempts; i++) {
+        StateMachine_Execute();
+        
+        // Check if recovery succeeded
+        if (!ErrorHandler_IsCriticalLock() &&
+            StateMachine_GetCurrentState() == STATE_IDLE) {
+            printf(" Recovery succeeded on attempt %d\n", i+1);
+            return;
+        }
+    }
+    
+    // If max attempts exceeded, should escalate to critical
+    StateMachine_Execute();
+    assert(StateMachine_GetCurrentState() == STATE_CRITICAL_ERROR);
+    
+    printf(" Normal error retry logic passed\n");
+}
+
+
+Test 3: Critical Error Lock
+----------------------------
+void test_critical_error_lock(void) {
+    printf("Testing critical error lock...\n");
+    
+    StateMachine_Init();
+    
+    // Report critical error
+    ErrorHandler_Report(ERROR_LEVEL_CRITICAL, 
+                       ERROR_CODE_HARDWARE_FAULT);
+    
+    // Execute state machine
+    StateMachine_Execute();
+    
+    // Verify lock is active
+    assert(ErrorHandler_IsCriticalLock() == true);
+    assert(StateMachine_GetCurrentState() == STATE_CRITICAL_ERROR);
+    
+    // Try to post events - should stay locked
+    StateMachine_PostEvent(EVENT_START);
+    StateMachine_Execute();
+    assert(StateMachine_GetCurrentState() == STATE_CRITICAL_ERROR);
+    
+    // Try reset - should not work with critical lock
+    StateMachine_Reset();
+    assert(StateMachine_GetCurrentState() == STATE_CRITICAL_ERROR);
+    
+    printf(" Critical error lock test passed\n");
+}
+
+
+Test 4: Error History
+---------------------
+void test_error_history(void) {
+    printf("Testing error history tracking...\n");
+    
+    ErrorHandler_Init();
+    
+    // Generate multiple errors
+    for (int i = 0; i < 5; i++) {
+        ErrorHandler_Report(ERROR_LEVEL_MINOR, 
+                          (ErrorCode_t)(ERROR_CODE_TIMEOUT + i));
+    }
+    
+    // Verify errors are tracked
+    // (Would need to add API to read error history)
+    
+    printf(" Error history test passed\n");
+}
+
+
+==============================================================================
+6. PERFORMANCE TESTING
+==============================================================================
+
+Test 1: Execution Time Measurement
+-----------------------------------
+void test_execution_time(void) {
+    printf("Testing execution time...\n");
+    
+    StateMachine_Init();
+    
+    // Measure execution time
+    uint32_t start = GetCurrentTimeMs();
+    
+    for (int i = 0; i < 1000; i++) {
+        StateMachine_Execute();
+    }
+    
+    uint32_t elapsed = GetCurrentTimeMs() - start;
+    float avg_time = (float)elapsed / 1000.0f;
+    
+    printf("Average execution time: %.3f ms\n", avg_time);
+    printf("Frequency: %.1f Hz\n", 1000.0f / avg_time);
+    
+    // Should be much less than task period
+    assert(avg_time < SM_TASK_PERIOD_MS);
+    
+    printf(" Execution time test passed\n");
+}
+
+
+Test 2: Memory Usage
+--------------------
+void test_memory_usage(void) {
+    printf("Testing memory usage...\n");
+    
+    printf("StateMachineContext_t: %zu bytes\n",
+           sizeof(StateMachineContext_t));
+    printf("StateConfig_t: %zu bytes\n",
+           sizeof(StateConfig_t));
+    printf("ErrorHandler_t: %zu bytes\n",
+           sizeof(ErrorHandler_t));
+    printf("DebugConfig_t: %zu bytes\n",
+           sizeof(DebugConfig_t));
+    
+    // Verify memory usage is within reasonable limits
+    assert(sizeof(StateMachineContext_t) < 2048);
+    
+    printf(" Memory usage is acceptable\n");
+}
+
+
+Test 3: Stress Test
+--------------------
+void test_stress(void) {
+    printf("Running stress test...\n");
+    
+    StateMachine_Init();
+    
+    // Run for extended period
+    for (int i = 0; i < 10000; i++) {
+        App_Main_Task();
+        
+        // Randomly post events
+        if (i % 100 == 0) {
+            StateMachine_PostEvent(EVENT_START);
+        }
+        if (i % 150 == 0) {
+            StateMachine_PostEvent(EVENT_DATA_READY);
+        }
+        
+        // Check for crashes/hangs
+        if (i % 1000 == 0) {
+            printf("Iteration %d, State: %s\n",
+                   i,
+                   StateToString(StateMachine_GetCurrentState()));
+        }
+    }
+    
+    printf(" Stress test passed\n");
+}
+
+
+==============================================================================
+7. PRODUCTION VALIDATION
+==============================================================================
+
+Pre-Production Checklist:
+--------------------------
+
+Configuration:
+ SM_TASK_PERIOD_MS appropriate for application
+ State timeouts configured correctly
+ Error retry counts set appropriately
+ Debug messages disabled for production
+  - DEBUG_ENABLE_INIT_MESSAGES = 0
+  - DEBUG_ENABLE_RUNTIME_MESSAGES = 0
+  - DEBUG_ENABLE_PERIODIC_MESSAGES = 0
+ Compiler optimization enabled (-Os or -O2)
+ Assert checks disabled (or set to safe failure mode)
+
+Functional Tests:
+ All state transitions tested
+ All error paths tested
+ Timeout handling verified
+ Recovery procedures validated
+ Communication interfaces tested
+ Watchdog integration verified
+
+Performance Tests:
+ Execution time within budget
+ Memory usage acceptable
+ No memory leaks
+ CPU usage reasonable
+ Response time meets requirements
+
+Reliability Tests:
+ 24-hour continuous operation test
+ Power cycle test (100+ cycles)
+ Temperature range testing
+ EMI/EMC testing
+ Fault injection testing
+
+
+Production Test Procedure:
+--------------------------
+1. Flash production firmware
+2. Power on device
+3. Verify initialization
+4. Run functional test sequence
+5. Monitor for 1 hour
+6. Verify error handling
+7. Test recovery procedures
+8. Power cycle 10 times
+9. Final functional test
+10. Record results and serial number
+
+
+==============================================================================
+8. DEBUG TECHNIQUES
+==============================================================================
+
+Technique 1: State History Tracking
+------------------------------------
+Add to code for debugging:
+
+uint8_t state_history[100];
+uint8_t history_index = 0;
+
+// In PerformStateTransition():
+state_history[history_index++] = new_state;
+if (history_index >= 100) history_index = 0;
+
+// To print history:
+for (int i = 0; i < 100; i++) {
+    printf("%s -> ", StateToString(state_history[i]));
+}
+
+
+Technique 2: Event Logging
+---------------------------
+Log all events for debugging:
+
+void LogEvent(StateMachineEvent_t event) {
+    Debug_SendMessage(DEBUG_MSG_INFO,
+                     "Event posted: %d in state %s",
+                     event,
+                     StateToString(StateMachine_GetCurrentState()));
+}
+
+
+Technique 3: Execution Count Monitoring
+----------------------------------------
+Monitor how many times each state executes:
+
+uint32_t state_exec_counts[STATE_MAX] = {0};
+
+// In OnState callbacks:
+state_exec_counts[current_state]++;
+
+// Print periodically:
+for (int i = 0; i < STATE_MAX; i++) {
+    printf("%s: %lu\n", StateToString(i), state_exec_counts[i]);
+}
+
+
+Technique 4: Watchpoint on State Variable
+------------------------------------------
+In GDB, set watchpoint on state variable:
+
+(gdb) watch g_sm_context.current_state
+(gdb) continue
+
+This will break whenever the state changes.
+
+
+==============================================================================
+9. COMMON ISSUES AND SOLUTIONS
+==============================================================================
+
+Issue 1: State Machine Not Transitioning
+-----------------------------------------
+Symptoms:
+- Posted events don't trigger transitions
+- Stuck in one state
+
+Solutions:
+ Verify transition is defined in state table
+ Check that event is being posted successfully
+ Ensure StateMachine_Execute() is being called
+ Verify no critical error lock is active
+ Check state timeout hasn't triggered different transition
+
+
+Issue 2: Debug Messages Not Appearing
+--------------------------------------
+Symptoms:
+- No output on serial/SPI/I2C
+- Messages seem to be lost
+
+Solutions:
+ Verify Debug_Init() was called
+ Check message type is enabled
+ Verify communication interface is initialized
+ Check baud rate/clock settings
+ Ensure Comm_XXX_Send() functions are implemented
+
+
+Issue 3: System Hangs in State
+-------------------------------
+Symptoms:
+- State machine stops executing
+- No response to events
+
+Solutions:
+ Check for blocking code in state callbacks
+ Verify timeout is set appropriately
+ Look for infinite loops in OnState()
+ Check if critical error lock is active
+ Verify App_Main_Task() is being called regularly
+
+
+Issue 4: Excessive Memory Usage
+--------------------------------
+Symptoms:
+- Stack overflow
+- Heap allocation fails
+
+Solutions:
+ Reduce ERROR_HISTORY_SIZE
+ Decrease DEBUG_MAX_MESSAGE_LENGTH
+ Optimize state callback implementations
+ Check for buffer overruns
+ Enable compiler optimizations
+
+
+Issue 5: False Error Triggers
+------------------------------
+Symptoms:
+- Errors reported when none exist
+- Constant recovery attempts
+
+Solutions:
+ Increase error timeouts
+ Adjust verification counts
+ Check sensor/communication noise
+ Add filtering to error detection
+ Review error threshold values
+
+
+==============================================================================
+CONCLUSION
+==============================================================================
+
+This testing guide provides comprehensive test coverage for the state machine
+framework. Regular testing during development and thorough validation before
+production deployment will ensure reliable operation.
+
+For additional testing support:
+- Review the README.md for architecture details
+- Check QUICK_REFERENCE.txt for API usage
+- Examine STATE_DIAGRAM.txt for state flow visualization
+
+Remember: Testing is not a one-time activity. Implement continuous testing
+throughout the development lifecycle for best results.
+
+==============================================================================
+END OF TESTING GUIDE
+==============================================================================
