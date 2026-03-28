@@ -73,3 +73,13 @@ target_link_libraries(your_target sm_framework)
 - Do not modify state machine context directly (use API)
 - Do not post multiple events rapidly (one pending at a time)
 - Do not leave all debug messages enabled in production
+
+## TODO
+- [ ] C99 standard
+- [ ] No heap allocations in framework core
+- [ ] All config via `#define` in app_config.h (copy from template)
+- [ ] Doxygen comments on public APIs
+- [ ] Do not block in state callbacks (no delay/infinite loops)
+- [ ] Do not modify state machine context directly (use API)
+- [ ] Do not post multiple events rapidly (one pending at a time)
+- [ ] Do not leave all debug messages enabled in production

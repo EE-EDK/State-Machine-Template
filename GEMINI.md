@@ -39,3 +39,6 @@ Extends the root `ENGINEERING-PROJECTS/GEMINI.md`. This file defines project-spe
 | `CMakeLists.txt` | Build configuration |
 | `README.md` | Full documentation and API reference |
 | `Quick-Guide.md` | Quick start guide |
+
+## TODO
+- [ ] None identified
