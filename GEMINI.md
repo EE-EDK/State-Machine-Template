@@ -42,3 +42,7 @@ Extends the root `ENGINEERING-PROJECTS/GEMINI.md`. This file defines project-spe
 
 ## TODO
 - [ ] None identified
+
+## Conversation History Archive
+
+Past AI conversations (217 total) are archived at the workspace root: `.claude/conversation-history/`. Search `index.json` by keyword or browse `index.md` for topic-grouped context on prior decisions, approaches, and project history.

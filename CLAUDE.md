@@ -83,3 +83,7 @@ target_link_libraries(your_target sm_framework)
 - [ ] Do not modify state machine context directly (use API)
 - [ ] Do not post multiple events rapidly (one pending at a time)
 - [ ] Do not leave all debug messages enabled in production
+
+## Conversation History Archive
+
+Past AI conversations (217 total) are archived at the workspace root: `.claude/conversation-history/`. Search `index.json` by keyword or browse `index.md` for topic-grouped context on prior decisions, approaches, and project history.
