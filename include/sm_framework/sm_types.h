@@ -271,16 +271,28 @@ typedef struct {
 } SM_ErrorInfo_t;
 
 /**
+ * @brief Error statistics counters
+ */
+typedef struct {
+    uint32_t errors_by_level[SM_ERROR_LEVEL_COUNT]; /**< Total errors per severity level */
+    uint32_t recovery_success;                      /**< Successful recovery attempts */
+    uint32_t recovery_fail;                         /**< Failed recovery attempts */
+    uint32_t last_error_time;                       /**< Timestamp of most recent error (ms) */
+} SM_ErrorStats_t;
+
+/**
  * @brief Error handler context (embedded in SM_Context)
  */
 typedef struct {
     SM_ErrorInfo_t current;                          /**< Current active error */
     SM_ErrorInfo_t history[SM_ERROR_HISTORY_SIZE];    /**< Error history ring */
+    SM_ErrorStats_t stats;                           /**< Error statistics */
     uint8_t history_index;                           /**< Next write position in history */
     uint8_t history_count;                           /**< Actual entries in history (not always max) */
     bool minor_active;                               /**< Minor error in progress */
     uint32_t minor_timestamp;                        /**< When minor error started */
     volatile bool critical_lock;                     /**< Critical error lock (volatile for ISR access) */
+    volatile uint8_t critical_lock_dis;              /**< DIS shadow of critical_lock (D7) */
 } SM_ErrorHandler_t;
 
 /**

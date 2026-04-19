@@ -12,6 +12,13 @@
  *   CRITICAL: System lock, requires hardware reset or watchdog
  *
  * All functions take SM_Handle_t -- errors are per-instance.
+ * DIS (Duplicate Inverse Storage) protects critical_lock from corruption.
+ * Numeric assertion IDs 700-799, module "sm_error".
+ *
+ * ISR safety:
+ *   SM_Error_IsCriticalLock -- ISR-safe (volatile read + DIS verify)
+ *   All other functions     -- NOT ISR-safe
+ *
  * Replaces the v2 sm_error_handler.h.
  */
 
@@ -59,7 +66,9 @@ void SM_Error_Clear(SM_Handle_t sm);
  * ===========================================================================*/
 
 /**
- * @brief Check if critical error lock is active
+ * @brief Check if critical error lock is active (ISR-safe)
+ *
+ * Reads the volatile critical_lock field and verifies its DIS shadow.
  *
  * @param sm Handle to the state machine instance
  * @return true if system is locked in critical error state
@@ -133,6 +142,22 @@ void SM_Error_RegisterRecoveryCallback(SM_Handle_t sm, SM_RecoveryCallback_t cb)
  * @param cb Error notification callback function (NULL to remove)
  */
 void SM_Error_RegisterNotifyCallback(SM_Handle_t sm, SM_ErrorCallback_t cb);
+
+/* =============================================================================
+ * ERROR STATISTICS
+ * ===========================================================================*/
+
+/**
+ * @brief Get error statistics
+ *
+ * Copies cumulative error statistics: per-level counts, recovery
+ * success/fail totals, and timestamp of the most recent error.
+ *
+ * @param sm    Handle to the state machine instance
+ * @param stats Output: error statistics snapshot
+ * @return true if successful, false if NULL parameter
+ */
+bool SM_Error_GetStats(SM_Handle_t sm, SM_ErrorStats_t *stats);
 
 #ifdef __cplusplus
 }

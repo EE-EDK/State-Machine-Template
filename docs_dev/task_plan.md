@@ -32,7 +32,7 @@ Rewrite the embedded C state machine framework from a basic template into a prod
 - [x] **Phase 0: Cleanup & Legacy Removal** (prep) -- completed 2026-04-18
 - [x] **Phase 1: Architecture Redesign** (headers, types, memory layout) -- completed 2026-04-18, commit 7823e69
 - [x] **Phase 2: Core Rewrite** (state machine engine, event queue, transitions) -- completed 2026-04-18, commit 4238969
-- [ ] **Phase 3: Error Handler Rewrite** (3-tier system, recovery, history)
+- [x] **Phase 3: Error Handler Rewrite** (DIS, SM_REQUIRE, stats) -- completed 2026-04-19
 - [x] **Phase 4: HAL Expansion** (watchdog, power, NVS, critical section nesting) -- completed 2026-04-18, commit 6b7fac6
 - [x] **Phase 5: Debug System Rewrite** (per-module filtering, compile-time stripping) -- completed 2026-04-18, commit 4eb4e03
 - [ ] **Phase 6: Test Infrastructure** (Unity framework, host-side tests, CI)
@@ -223,17 +223,17 @@ Rewrite the embedded C state machine framework from a basic template into a prod
 **Goal:** Fix all bugs, support custom recovery, integrate with new handle-based API. Add DIS on critical_lock field.
 
 ### Tasks
-- [ ] 3.1 Rewrite `SM_ErrorHandler_t` as embedded struct inside SM context (no extern)
-- [ ] 3.2 Fix `GetHistoryCount` to track actual count (not always return max)
-- [ ] 3.3 Fix time-zero sentinel bug (use `bool minor_active` flag instead of timestamp==0)
-- [ ] 3.4 Fix recovery logic: user-registered callback is sole recovery mechanism (remove hardcoded COMM_LOST/TIMEOUT switch). If no callback registered, recovery always fails.
-- [ ] 3.5 Add `SM_Error_RegisterRecoveryCallback(SM_Handle_t, SM_RecoveryCallback_t)` — single callback, user dispatches by error code internally
-- [ ] 3.6 Add `SM_Error_RegisterNotifyCallback(SM_Handle_t, SM_ErrorCallback_t)` — called on every error report (all levels)
-- [ ] 3.7 Add bounds checking on error code/level before array access. Use `SM_REQUIRE(id, code < max)`.
-- [ ] 3.8 Make `critical_lock` volatile + **DIS-protected**: `critical_lock_dis = ~critical_lock`. Verify DIS before acting on lock state (QP/C DIS pattern on safety-critical flags).
-- [ ] 3.9 Add `SM_Error_GetStats` — total errors by level, last error timestamp, recovery success/fail counts
-- [ ] 3.10 Document ISR safety: `SM_Error_IsCriticalLock` is ISR-safe (volatile read + DIS verify). All others are NOT ISR-safe.
-- [ ] 3.11 Use `SM_DEFINE_MODULE("sm_error")` + numeric assertion IDs throughout
+- [x] 3.1 Rewrite `SM_ErrorHandler_t` as embedded struct inside SM context (no extern) -- done in Phase 1
+- [x] 3.2 Fix `GetHistoryCount` to track actual count (not always return max) -- done in Phase 1
+- [x] 3.3 Fix time-zero sentinel bug (use `bool minor_active` flag instead of timestamp==0) -- done in Phase 1
+- [x] 3.4 Fix recovery logic: user-registered callback is sole recovery mechanism -- done in Phase 1
+- [x] 3.5 Add `SM_Error_RegisterRecoveryCallback` -- done in Phase 1
+- [x] 3.6 Add `SM_Error_RegisterNotifyCallback` -- done in Phase 1
+- [x] 3.7 Add bounds checking on error code/level before array access. SM_REQUIRE(700, level < SM_ERROR_LEVEL_COUNT) + history bounds (730-731, 742)
+- [x] 3.8 DIS on `critical_lock`: `critical_lock_dis` in SM_ErrorHandler_t, SM_DIS_UPDATE on write (sm_error.c + SM_Init), SM_DIS_VERIFY on read (SM_Error_IsCriticalLock:710, SM_Process:205, SM_Reset:600)
+- [x] 3.9 `SM_Error_GetStats` — SM_ErrorStats_t with errors_by_level[], recovery_success, recovery_fail, last_error_time
+- [x] 3.10 ISR safety documented in sm_error.h file header
+- [x] 3.11 `SM_DEFINE_MODULE("sm_error")` + assertion IDs 700-749 throughout
 
 ### Exit Criteria
 - History count matches actual logged errors

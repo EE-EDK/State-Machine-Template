@@ -20,13 +20,15 @@
  *
  * No extern globals. No heap. No application-specific state definitions.
  *
- * Assertion ID ranges:
+ * Assertion ID ranges (sm_engine):
  *   100-199  SM_Init
  *   200-299  SM_Process
  *   300-399  Time events
  *   400-499  Deferred events
  *   500-599  Event posting / queue ops
  *   600-699  Reset / misc lifecycle
+ *
+ * See sm_error.c for 700-799 (error handler).
  */
 
 #include "sm_framework/sm_framework.h"
@@ -298,8 +300,10 @@ bool SM_Init(SM_Handle_t sm, const SM_Config_t *config)
     sm->event_queue.front_valid = false;
     sm->event_queue.nMin = SM_EVENT_QUEUE_SIZE;
 
-    /* Error handler is zeroed by memset */
+    /* Error handler is zeroed by memset -- set DIS for critical_lock */
     sm->error.critical_lock = false;
+    SM_DIS_UPDATE(sm->error.critical_lock ? 1U : 0U,
+                  sm->error.critical_lock_dis, uint8_t);
 
     /* Callbacks start as NULL (zeroed) */
 
@@ -360,7 +364,9 @@ void SM_Process(SM_Handle_t sm)
     /* Verify current_state DIS (D7) */
     SM_DIS_VERIFY(sm->current_state, sm->state_dis, uint16_t, 201);
 
-    /* Critical lock -- skip all processing (system is locked) */
+    /* Critical lock -- verify DIS, then skip all processing if locked */
+    SM_DIS_VERIFY(sm->error.critical_lock ? 1U : 0U,
+                  sm->error.critical_lock_dis, uint8_t, 205);
     if (sm->error.critical_lock) {
         return;
     }
@@ -492,7 +498,9 @@ void SM_Reset(SM_Handle_t sm)
         return;
     }
 
-    /* Cannot reset if critical lock is active */
+    /* Cannot reset if critical lock is active -- verify DIS */
+    SM_DIS_VERIFY(sm->error.critical_lock ? 1U : 0U,
+                  sm->error.critical_lock_dis, uint8_t, 600);
     if (sm->error.critical_lock) {
         SM_LOG_WARN("SM_Reset: blocked by critical error lock");
         return;

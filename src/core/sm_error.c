@@ -1,29 +1,40 @@
 /**
  * @file sm_error.c
- * @brief Error handler implementation (v3.0)
+ * @brief Error handler implementation (v3.0 Phase 3)
  * @version 3.0.0
- * @date 2026-04-18
+ * @date 2026-04-19
  *
  * @copyright Copyright (c) 2025-2026
  *
  * Per-instance error handling via SM_Handle_t.
- * Phase 1 stub -- basic recording and querying.
- * Full error recovery logic comes in Phase 3.
+ * DIS on critical_lock (D7). Numeric assertion IDs 700-799.
+ * Error statistics tracking with per-level counts and recovery metrics.
+ *
+ * Assertion ID ranges:
+ *   700-709  SM_Error_Report
+ *   710-719  SM_Error_IsCriticalLock / query functions
+ *   720-729  SM_Error_AttemptRecovery
+ *   730-739  SM_Error_GetStats / SM_Error_GetHistory
+ *   740-749  internal helpers
  */
 
 #include "sm_framework/sm_framework.h"
 #include <string.h>
 
+SM_DEFINE_MODULE("sm_error");
+
 /* =============================================================================
  * INTERNAL HELPERS
  * ===========================================================================*/
 
-/**
- * @brief Add an error record to the history ring buffer
- */
 static void sm_error_add_to_history(SM_Handle_t sm, const SM_ErrorInfo_t *info)
 {
+    SM_REQUIRE(740, sm != NULL);
+    SM_REQUIRE(741, info != NULL);
+
     SM_ErrorHandler_t *eh = &sm->error;
+
+    SM_REQUIRE(742, eh->history_index < SM_ERROR_HISTORY_SIZE);
 
     eh->history[eh->history_index] = *info;
     eh->history_index = (uint8_t)((eh->history_index + 1U) % SM_ERROR_HISTORY_SIZE);
@@ -62,6 +73,11 @@ bool SM_Error_Report(SM_Handle_t sm, SM_ErrorLevel_t level, uint16_t code)
     /* Set as current error */
     sm->error.current = info;
 
+    /* Update statistics */
+    SM_REQUIRE(700, (uint8_t)level < SM_ERROR_LEVEL_COUNT);
+    sm->error.stats.errors_by_level[level]++;
+    sm->error.stats.last_error_time = info.timestamp;
+
     /* Handle based on severity */
     switch (level) {
         case SM_ERROR_MINOR:
@@ -78,6 +94,8 @@ bool SM_Error_Report(SM_Handle_t sm, SM_ErrorLevel_t level, uint16_t code)
 
         case SM_ERROR_CRITICAL:
             sm->error.critical_lock = true;
+            SM_DIS_UPDATE(sm->error.critical_lock ? 1U : 0U,
+                          sm->error.critical_lock_dis, uint8_t);
             SM_LOG_ERROR("SM_Error: CRITICAL code=%u state=%u -- SYSTEM LOCKED",
                          (unsigned)code, (unsigned)info.state);
             break;
@@ -106,7 +124,8 @@ void SM_Error_Clear(SM_Handle_t sm)
     sm->error.current.recovered = false;
     sm->error.minor_active = false;
 
-    /* Note: critical_lock is NOT cleared here -- requires SM_Reset or HW reset */
+    /* critical_lock is NOT cleared -- requires SM_Reset or HW reset.
+     * DIS shadow remains consistent (unchanged since last write). */
 }
 
 /* =============================================================================
@@ -118,6 +137,10 @@ bool SM_Error_IsCriticalLock(SM_Handle_t sm)
     if (sm == NULL) {
         return false;
     }
+
+    SM_DIS_VERIFY(sm->error.critical_lock ? 1U : 0U,
+                  sm->error.critical_lock_dis, uint8_t, 710);
+
     return sm->error.critical_lock;
 }
 
@@ -141,9 +164,14 @@ bool SM_Error_GetHistory(SM_Handle_t sm, uint8_t index, SM_ErrorInfo_t *info)
         return false;
     }
 
+    SM_REQUIRE(730, sm->error.history_index <= SM_ERROR_HISTORY_SIZE);
+
     /* index 0 = most recent */
     uint8_t actual = (uint8_t)((sm->error.history_index + SM_ERROR_HISTORY_SIZE
                                 - 1U - index) % SM_ERROR_HISTORY_SIZE);
+
+    SM_REQUIRE(731, actual < SM_ERROR_HISTORY_SIZE);
+
     *info = sm->error.history[actual];
     return true;
 }
@@ -175,6 +203,7 @@ bool SM_Error_AttemptRecovery(SM_Handle_t sm)
     if (sm->error.current.retry_count >= SM_ERROR_MAX_RECOVERY) {
         SM_LOG_ERROR("SM_Error_AttemptRecovery: max retries (%u) exceeded",
                      (unsigned)SM_ERROR_MAX_RECOVERY);
+        sm->error.stats.recovery_fail++;
         return false;
     }
 
@@ -183,13 +212,17 @@ bool SM_Error_AttemptRecovery(SM_Handle_t sm)
         bool recovered = sm->recovery_cb(sm, sm->error.current.code);
         if (recovered) {
             sm->error.current.recovered = true;
+            sm->error.stats.recovery_success++;
             SM_LOG_INFO("SM_Error_AttemptRecovery: recovered (code=%u)",
                         (unsigned)sm->error.current.code);
+        } else {
+            sm->error.stats.recovery_fail++;
         }
         return recovered;
     }
 
     /* No callback registered -- cannot recover */
+    sm->error.stats.recovery_fail++;
     return false;
 }
 
@@ -211,4 +244,18 @@ void SM_Error_RegisterNotifyCallback(SM_Handle_t sm, SM_ErrorCallback_t cb)
         return;
     }
     sm->error_cb = cb;
+}
+
+/* =============================================================================
+ * ERROR STATISTICS
+ * ===========================================================================*/
+
+bool SM_Error_GetStats(SM_Handle_t sm, SM_ErrorStats_t *stats)
+{
+    if (sm == NULL || stats == NULL) {
+        return false;
+    }
+
+    *stats = sm->error.stats;
+    return true;
 }

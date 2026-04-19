@@ -13,12 +13,12 @@ state-machine-template/
 │   ├── sm_safety.h         # Safety macros: SM_DEFINE_MODULE, SM_REQUIRE, DIS, bounded loops
 │   ├── sm_platform.h       # HAL interface: timing, critsec, watchdog, sleep, NVS, reset, capabilities
 │   ├── sm_engine.h         # Core API: SM_Init, SM_Process, SM_PostEvent, time/deferred events
-│   ├── sm_error.h          # Error API: 3-tier report/recover/history
+│   ├── sm_error.h          # Error API: 3-tier report/recover/history/stats, DIS on critical_lock
 │   └── sm_debug.h          # Debug API: SM_LOG_*, per-module tags, runtime level control
 ├── src/
 │   ├── core/
-│   │   ├── sm_engine.c     # Full RTC dispatch engine (707 lines)
-│   │   ├── sm_error.c      # Error handler (Phase 1 stub — Phase 3 rewrite pending)
+│   │   ├── sm_engine.c     # Full RTC dispatch engine with DIS on critical_lock
+│   │   ├── sm_error.c      # Error handler: DIS, SM_REQUIRE, stats (Phase 3 complete)
 │   │   └── sm_debug.c      # Debug system with tag filtering, periodic interval
 │   ├── platform/
 │   │   └── sm_platform_weak.c  # Weak HAL defaults (nested critsec, SimTick, capabilities)
@@ -80,7 +80,7 @@ See `docs_dev/task_plan.md` for full rationale. Key: D6 frontEvt, D7 DIS, D8 bou
 - `volatile` on ISR-shared data (current_state, event queue head/tail/count, critical_lock)
 - `extern "C"` guards for C++ compatibility
 - SM_WEAK disabled on PE/COFF (Windows/MinGW) — override via build system exclusion
-- Numeric assertion IDs: 100-199 init, 200-299 process, 300-399 time events, 400-499 deferred events
+- Numeric assertion IDs: 100-199 init, 200-299 process, 300-399 time events, 400-499 deferred events, 500-599 event posting, 600-699 reset/lifecycle, 700-799 error handler
 
 ## What NOT to Do
 - Do not block in state callbacks (no delay/infinite loops)
@@ -90,7 +90,7 @@ See `docs_dev/task_plan.md` for full rationale. Key: D6 frontEvt, D7 DIS, D8 bou
 - Do not leave all debug messages enabled in production (use SM_DEBUG_LEVEL and SM_Debug_EnableLevel)
 
 ## TODO
-- [ ] **Phase 3: Error Handler Rewrite** — DIS on critical_lock, bounds-checked assertions (SM_REQUIRE), user-dispatched recovery callback, SM_Error_GetStats, SM_DEFINE_MODULE("sm_error") + numeric IDs throughout
+- [x] **Phase 3: Error Handler Rewrite** — DIS on critical_lock, SM_REQUIRE assertions (700-799), SM_Error_GetStats, SM_DEFINE_MODULE("sm_error"), error stats tracking
 - [ ] **Phase 6: Test Infrastructure** — Unity framework, event queue tests (frontEvt, watermark), DIS corruption detection, time event arm/disarm/tick, deferred event LIFO recall, guard conditions, HSM parent fallback, nested critsec, 90%+ branch coverage, ctest + gcov/lcov, GitHub Actions CI
 - [ ] **Phase 7: Examples & Documentation** — blinky w/ timer events, sensor pipeline w/ guards, error recovery demo, multi-FSM, STM32 platform stub, README rewrite, Quick-Guide rewrite, MIGRATION.md (v2→v3)
 - [ ] **Phase 8: Validation & Release** — cppcheck, clang-tidy, arm-none-eabi-size audit (RAM < 2KB, Flash < 10KB), zero heap verification (nm), MISRA C:2012 checklist, _Static_assert validation, tag v3.0.0
