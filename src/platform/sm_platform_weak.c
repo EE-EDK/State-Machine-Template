@@ -11,11 +11,15 @@
  *
  * Fixes from v2:
  *   - SM_Platform_IsTimeout is now weak (overridable)
- *   - Simulation time uses clock_gettime when available, falls back to counter
- *   - No double-increment bug in simulation time
+ *   - Simulation time uses a manually-ticked counter; GetTimeMs reads it
+ *     without side-effects so IsTimeout does not cause a double-increment
+ *   - SM_Platform_SimTick() advances the counter for unit-test harnesses
  *   - All new HAL functions (watchdog, sleep, NVS, reset reason) have stubs
  *   - Generalized output (SM_Platform_OutputInit/OutputSend) replaces
  *     per-protocol init/send
+ *   - Critical sections track nesting depth
+ *   - SM_Platform_ExitSleep() for post-wake peripheral restore
+ *   - SM_Platform_HasCapability() for runtime capability queries
  */
 
 #include "sm_framework/sm_platform.h"
@@ -23,20 +27,29 @@
 
 /* =============================================================================
  * TIMING
+ *
+ * Simulation strategy:
+ *   sim_time_ms is a static counter that ONLY advances via SM_Platform_SimTick().
+ *   SM_Platform_GetTimeMs() is a pure read -- no side-effects.  This avoids
+ *   the v2 bug where IsTimeout calling GetTimeMs would double-increment the
+ *   counter, producing unpredictable timeout behavior.
+ *
+ *   In unit tests, call SM_Platform_SimTick() in your test loop to advance
+ *   time deterministically.  On real platforms, override GetTimeMs with a
+ *   hardware timer (HAL_GetTick, esp_timer_get_time, etc.).
  * ===========================================================================*/
+
+/** Simulation millisecond counter -- advanced only by SM_Platform_SimTick(). */
+static uint32_t sim_time_ms = 0U;
 
 SM_WEAK uint32_t SM_Platform_GetTimeMs(void)
 {
-    /*
-     * Simulation default: monotonically incrementing counter.
-     * Real platforms override with HAL timer.
-     *
-     * Note: returns unique value each call. SM_Platform_IsTimeout calls
-     * this, so timeout calculations use two separate reads. This is
-     * intentional for simulation -- real platforms use a hardware timer.
-     */
-    static uint32_t sim_time = 0U;
-    return sim_time++;
+    return sim_time_ms;
+}
+
+SM_WEAK void SM_Platform_SimTick(void)
+{
+    sim_time_ms++;
 }
 
 SM_WEAK bool SM_Platform_IsTimeout(uint32_t start, uint32_t timeout_ms)
@@ -49,16 +62,43 @@ SM_WEAK bool SM_Platform_IsTimeout(uint32_t start, uint32_t timeout_ms)
 
 /* =============================================================================
  * CRITICAL SECTIONS
+ *
+ * Nesting-aware implementation:
+ *   - EnterCritical increments depth; on real HW, disable IRQs on 0->1.
+ *   - ExitCritical decrements depth; on real HW, re-enable IRQs on 1->0.
+ *   - GetCriticalNesting returns current depth (0 = outside critical section).
+ *
+ * The simulation default only tracks the counter (no actual interrupt disable).
+ * On Cortex-M, replace with __disable_irq() / __enable_irq() guarded by depth.
  * ===========================================================================*/
+
+/** Nesting counter for critical sections.  Must NOT be modified outside
+ *  EnterCritical / ExitCritical. */
+static uint32_t critical_nesting = 0U;
 
 SM_WEAK void SM_Platform_EnterCritical(void)
 {
-    /* No-op for single-threaded simulation */
+    /*
+     * On real hardware:
+     *   if (critical_nesting == 0U) { __disable_irq(); }
+     */
+    critical_nesting++;
 }
 
 SM_WEAK void SM_Platform_ExitCritical(void)
 {
-    /* No-op for single-threaded simulation */
+    if (critical_nesting > 0U) {
+        critical_nesting--;
+    }
+    /*
+     * On real hardware:
+     *   if (critical_nesting == 0U) { __enable_irq(); }
+     */
+}
+
+SM_WEAK uint32_t SM_Platform_GetCriticalNesting(void)
+{
+    return critical_nesting;
 }
 
 /* =============================================================================
@@ -113,6 +153,12 @@ SM_WEAK void SM_Platform_EnterSleep(SM_SleepMode_t mode)
     /* No-op in simulation */
 }
 
+SM_WEAK void SM_Platform_ExitSleep(void)
+{
+    /* No-op in simulation.
+     * Real implementations restore peripheral clocks, re-init comms, etc. */
+}
+
 /* =============================================================================
  * NON-VOLATILE STORAGE
  * ===========================================================================*/
@@ -140,6 +186,32 @@ SM_WEAK bool SM_Platform_NVS_Read(uint16_t key, void *data, uint16_t len)
 SM_WEAK SM_ResetReason_t SM_Platform_GetResetReason(void)
 {
     return SM_RESET_POR;  /* Simulation: always power-on reset */
+}
+
+/* =============================================================================
+ * PLATFORM CAPABILITY CHECK
+ * ===========================================================================*/
+
+SM_WEAK bool SM_Platform_HasCapability(SM_PlatformCap_t cap)
+{
+    /*
+     * Simulation defaults:
+     *   - Watchdog, NVS, Sleep: not available (stubs are no-ops)
+     *   - Output: available (prints to stdout)
+     *
+     * Real platform implementations override to return true for
+     * capabilities they actually provide.
+     */
+    switch (cap) {
+    case SM_CAP_OUTPUT:
+        return true;
+    case SM_CAP_WATCHDOG: /* fall through */
+    case SM_CAP_NVS:      /* fall through */
+    case SM_CAP_SLEEP:    /* fall through */
+    case SM_CAP_COUNT:    /* fall through */
+    default:
+        return false;
+    }
 }
 
 /* =============================================================================

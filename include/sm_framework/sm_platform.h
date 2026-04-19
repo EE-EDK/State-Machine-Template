@@ -132,6 +132,31 @@ void SM_Platform_EnterCritical(void);
  */
 void SM_Platform_ExitCritical(void);
 
+/**
+ * @brief Query current critical section nesting depth
+ *
+ * Returns 0 when not inside any critical section. Useful for debugging
+ * and runtime assertions (e.g., verifying balanced enter/exit pairs).
+ *
+ * @return Current nesting depth (0 = not in critical section)
+ */
+uint32_t SM_Platform_GetCriticalNesting(void);
+
+/* =============================================================================
+ * SIMULATION HELPERS
+ * ===========================================================================*/
+
+/**
+ * @brief Advance the simulation tick counter by one millisecond
+ *
+ * Only meaningful when using the default weak SM_Platform_GetTimeMs().
+ * Call this from unit-test harnesses or simulation loops to advance time
+ * deterministically.  Has no effect on platforms that override GetTimeMs.
+ *
+ * @note Real platform overrides of GetTimeMs ignore this counter entirely.
+ */
+void SM_Platform_SimTick(void);
+
 /* =============================================================================
  * OUTPUT (generalized debug/communication output)
  * ===========================================================================*/
@@ -200,6 +225,19 @@ typedef enum {
  */
 void SM_Platform_EnterSleep(SM_SleepMode_t mode);
 
+/**
+ * @brief Exit sleep mode -- restore peripherals after waking
+ *
+ * Called after the MCU wakes from a low-power sleep mode to restore
+ * peripheral clocks, re-initialize communication interfaces, and perform
+ * any other post-wake housekeeping.
+ *
+ * @note On real hardware, this typically re-enables clocks gated by
+ *       SM_Platform_EnterSleep() and reconfigures peripherals that lost
+ *       state during deep/standby sleep.  The weak default is a no-op.
+ */
+void SM_Platform_ExitSleep(void);
+
 /* =============================================================================
  * NON-VOLATILE STORAGE (new in v3)
  * ===========================================================================*/
@@ -246,6 +284,66 @@ typedef enum {
  * @return Reset reason code
  */
 SM_ResetReason_t SM_Platform_GetResetReason(void);
+
+/* =============================================================================
+ * COMPILE-TIME PLATFORM DETECTION (new in v3)
+ * ===========================================================================*/
+
+/**
+ * @brief Auto-detect target platform family from compiler predefined macros
+ *
+ * Exactly one of SM_PLATFORM_ARM, SM_PLATFORM_POSIX, or SM_PLATFORM_SIM
+ * will be defined (value 1).  Applications can test these to conditionalize
+ * code without manually setting build flags.
+ *
+ * Detection order:
+ *   1. ARM Cortex-M / Cortex-A / AArch64 -> SM_PLATFORM_ARM
+ *   2. Linux / Unix / macOS              -> SM_PLATFORM_POSIX
+ *   3. Everything else (Windows sim, etc) -> SM_PLATFORM_SIM
+ *
+ * Users may pre-define any of these before including this header to override
+ * auto-detection.
+ */
+#if !defined(SM_PLATFORM_ARM) && !defined(SM_PLATFORM_POSIX) && !defined(SM_PLATFORM_SIM)
+    #if defined(__ARM_ARCH) || defined(__arm__) || defined(__aarch64__)
+        #define SM_PLATFORM_ARM     1
+    #elif defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+        #define SM_PLATFORM_POSIX   1
+    #else
+        #define SM_PLATFORM_SIM     1
+    #endif
+#endif
+
+/* =============================================================================
+ * RUNTIME PLATFORM CAPABILITY CHECK (new in v3)
+ * ===========================================================================*/
+
+/**
+ * @brief Platform capability identifiers
+ *
+ * Used with SM_Platform_HasCapability() to query at runtime whether a
+ * specific HAL subsystem is implemented on the current platform.
+ */
+typedef enum {
+    SM_CAP_WATCHDOG = 0,  /**< Watchdog timer available */
+    SM_CAP_NVS,           /**< Non-volatile storage available */
+    SM_CAP_SLEEP,         /**< Sleep modes available */
+    SM_CAP_OUTPUT,        /**< Debug/communication output available */
+    SM_CAP_COUNT          /**< Sentinel -- number of capabilities */
+} SM_PlatformCap_t;
+
+/**
+ * @brief Query whether a platform capability is available
+ *
+ * @param cap Capability to check
+ * @return true if the platform implements this capability
+ *
+ * @note The weak default returns false for hardware-dependent capabilities
+ *       (watchdog, NVS, sleep) and true for output (always available via
+ *       stdout fallback).  Real platform implementations override this to
+ *       report their actual capabilities.
+ */
+bool SM_Platform_HasCapability(SM_PlatformCap_t cap);
 
 /* =============================================================================
  * ASSERTIONS
