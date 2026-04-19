@@ -146,12 +146,11 @@ SM_WEAK SM_ResetReason_t SM_Platform_GetResetReason(void)
  * ASSERTIONS
  * ===========================================================================*/
 
-SM_WEAK void SM_Platform_Assert(const char *expr, const char *file, int line)
+SM_WEAK void SM_Platform_Assert(const char *module, int id)
 {
-    printf("\n*** SM_ASSERT FAILED ***\n");
-    printf("Expression: %s\n", expr);
-    printf("File:       %s\n", file);
-    printf("Line:       %d\n", line);
+    printf("\n*** SM ASSERTION FAILED ***\n");
+    printf("Module: %s\n", module != NULL ? module : "(null)");
+    printf("ID:     %d\n", id);
     printf("System halted.\n");
     fflush(stdout);
 

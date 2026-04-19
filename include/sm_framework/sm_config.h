@@ -192,6 +192,55 @@
 #define SM_FEATURE_ASSERT            (1U)
 #endif
 
+/**
+ * @brief Enable time event subsystem
+ *
+ * When 0: time event code compiles out, no RAM overhead.
+ * When 1 (default): SM_TimeEvt_* APIs available, linked-list per instance.
+ */
+#ifndef SM_FEATURE_TIME_EVENTS
+#define SM_FEATURE_TIME_EVENTS       (1U)
+#endif
+
+/**
+ * @brief Maximum number of time events per instance
+ *
+ * Used as the hard bound when ticking the time event list in SM_Process().
+ * Prevents runaway iteration on a corrupted list.
+ */
+#ifndef SM_FEATURE_MAX_TIME_EVENTS
+#define SM_FEATURE_MAX_TIME_EVENTS   (16U)
+#endif
+
+/**
+ * @brief Enable deferred event subsystem
+ *
+ * When 0 (default): deferred event queue not allocated, APIs compile out.
+ * When 1: SM_DeferEvent / SM_RecallEvent / SM_FlushDeferred available.
+ */
+#ifndef SM_FEATURE_DEFER
+#define SM_FEATURE_DEFER             (0U)
+#endif
+
+/**
+ * @brief Size of the deferred event ring buffer
+ *
+ * Only used when SM_FEATURE_DEFER == 1. Each slot is 8 bytes (SM_EventItem_t).
+ */
+#ifndef SM_DEFER_QUEUE_SIZE
+#define SM_DEFER_QUEUE_SIZE          (4U)
+#endif
+
+/**
+ * @brief Maximum HSM nesting depth
+ *
+ * Only used when SM_FEATURE_HSM == 1. Bounds the parent-chain traversal
+ * during LCA computation and entry/exit sequences.
+ */
+#ifndef SM_HSM_MAX_DEPTH
+#define SM_HSM_MAX_DEPTH             (6U)
+#endif
+
 /* =============================================================================
  * TASK PERIOD
  * ===========================================================================*/

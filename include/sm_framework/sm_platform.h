@@ -252,30 +252,37 @@ SM_ResetReason_t SM_Platform_GetResetReason(void);
  * ===========================================================================*/
 
 /**
- * @brief Platform-specific assertion handler
+ * @brief Platform-specific assertion handler (numeric pattern)
  *
- * Called when SM_ASSERT() fails. Should log the failure and halt or reset.
+ * Called when SM_REQUIRE / SM_ASSERT_ID / SM_INVARIANT / SM_ASSERT fails.
+ * Should log the failure and halt or reset.
  *
- * @param expr Expression that failed (as string)
- * @param file Source file where assertion failed
- * @param line Line number where assertion failed
+ * The numeric-ID pattern (module name + integer) replaces __FILE__ / __LINE__
+ * to save flash on constrained targets. Each .c file declares its module
+ * name via SM_DEFINE_MODULE() and uses unique integer IDs per assertion site.
+ *
+ * @param module Module name string (from SM_DEFINE_MODULE)
+ * @param id     Numeric assertion identifier (unique within module)
  */
-void SM_Platform_Assert(const char *expr, const char *file, int line);
+void SM_Platform_Assert(const char *module, int id);
 
 /* Include config for SM_FEATURE_ASSERT (already included transitively,
  * but be explicit for clarity) */
 #include "sm_config.h"
 
 /**
- * @brief Runtime assertion macro
+ * @brief Legacy runtime assertion macro (uses __FILE__ + __LINE__ mapped to
+ *        the numeric Assert signature for backward compatibility)
+ *
+ * Prefer SM_REQUIRE / SM_ASSERT_ID from sm_safety.h for new code.
  *
  * When SM_FEATURE_ASSERT == 1: evaluates expression, calls
- * SM_Platform_Assert() on failure.
+ * SM_Platform_Assert() on failure with file name and line number.
  * When SM_FEATURE_ASSERT == 0: compiles to ((void)0).
  */
 #if SM_FEATURE_ASSERT
     #define SM_ASSERT(expr) \
-        do { if (!(expr)) SM_Platform_Assert(#expr, __FILE__, __LINE__); } while(0)
+        do { if (!(expr)) SM_Platform_Assert(__FILE__, __LINE__); } while(0)
 #else
     #define SM_ASSERT(expr) ((void)0)
 #endif

@@ -117,6 +117,18 @@ uint8_t SM_EventQueueDepth(SM_Handle_t sm);
  */
 void SM_EventQueueFlush(SM_Handle_t sm);
 
+/**
+ * @brief Get the minimum free queue slots ever recorded (watermark)
+ *
+ * Tracks the high-water mark of queue usage.  nMin starts at
+ * SM_EVENT_QUEUE_SIZE and decreases toward 0 as the queue fills.
+ * Useful for sizing the queue during development.
+ *
+ * @param sm Handle to the state machine instance
+ * @return Minimum number of free slots that has ever been observed
+ */
+uint8_t SM_EventQueueGetMin(SM_Handle_t sm);
+
 /* =============================================================================
  * STATE QUERIES
  * ===========================================================================*/
@@ -216,6 +228,108 @@ bool SM_GetStats(SM_Handle_t sm, SM_Stats_t *stats);
 void SM_ResetStats(SM_Handle_t sm);
 
 #endif /* SM_FEATURE_STATISTICS */
+
+/* =============================================================================
+ * TIME EVENTS (compile-time optional, D9)
+ * ===========================================================================*/
+
+#if SM_FEATURE_TIME_EVENTS
+
+/**
+ * @brief Initialize a time event (does NOT arm it)
+ *
+ * Must be called once before SM_TimeEvt_Arm.
+ * Sets the owning state machine and event signal.
+ *
+ * @param te    Pointer to user-allocated SM_TimeEvt_t
+ * @param sm    Handle to the owning state machine
+ * @param sig   Event ID to post on expiry
+ * @param data  Event payload to carry
+ */
+void SM_TimeEvt_Init(SM_TimeEvt_t *te, SM_Handle_t sm, uint16_t sig, uint32_t data);
+
+/**
+ * @brief Arm (start) a time event
+ *
+ * ISR-SAFE: uses critical sections.
+ * Inserts the time event into the instance's linked list.
+ *
+ * @param te        Pointer to an initialized SM_TimeEvt_t
+ * @param ticks     Initial delay in SM_Process ticks (must be > 0)
+ * @param interval  Auto-reload value (0 = one-shot, >0 = periodic)
+ */
+void SM_TimeEvt_Arm(SM_TimeEvt_t *te, uint32_t ticks, uint32_t interval);
+
+/**
+ * @brief Disarm (stop) a time event
+ *
+ * ISR-SAFE: uses critical sections.
+ * Removes the time event from the linked list if it was armed.
+ *
+ * @param te  Pointer to the time event to disarm
+ * @return true if the event was armed and has been disarmed,
+ *         false if it was already disarmed
+ */
+bool SM_TimeEvt_Disarm(SM_TimeEvt_t *te);
+
+/**
+ * @brief Tick all time events for a state machine instance (internal)
+ *
+ * Called from SM_Process. Walks the linked list, decrements counters,
+ * posts events on expiry. Hard-bounded by SM_FEATURE_MAX_TIME_EVENTS.
+ *
+ * @param sm Handle to the state machine instance
+ *
+ * @warning Internal API -- do not call directly from application code.
+ */
+void SM_TimeEvt_Tick_(SM_Handle_t sm);
+
+#endif /* SM_FEATURE_TIME_EVENTS */
+
+/* =============================================================================
+ * DEFERRED EVENTS (compile-time optional, D10)
+ * ===========================================================================*/
+
+#if SM_FEATURE_DEFER
+
+/**
+ * @brief Defer an event for later processing
+ *
+ * Places the event into the deferred queue. The deferred event will be
+ * recalled (re-posted to the front of the main queue) when SM_RecallEvent
+ * is called, typically on state entry.
+ *
+ * NOT ISR-safe -- call only from state callbacks or SM_Process context.
+ *
+ * @param sm    Handle to the state machine instance
+ * @param event Event ID to defer
+ * @param data  Event payload
+ * @return true if deferred, false if defer queue full or invalid params
+ */
+bool SM_DeferEvent(SM_Handle_t sm, uint16_t event, uint32_t data);
+
+/**
+ * @brief Recall one deferred event to the front of the main queue
+ *
+ * Pops the most recently deferred event and posts it to the front slot
+ * of the main event queue (LIFO recall). If the front slot is occupied,
+ * the recalled event is placed into the ring buffer at the head.
+ *
+ * NOT ISR-safe -- call only from state callbacks or SM_Process context.
+ *
+ * @param sm Handle to the state machine instance
+ * @return true if an event was recalled, false if defer queue empty
+ */
+bool SM_RecallEvent(SM_Handle_t sm);
+
+/**
+ * @brief Discard all deferred events
+ *
+ * @param sm Handle to the state machine instance
+ */
+void SM_FlushDeferred(SM_Handle_t sm);
+
+#endif /* SM_FEATURE_DEFER */
 
 #ifdef __cplusplus
 }

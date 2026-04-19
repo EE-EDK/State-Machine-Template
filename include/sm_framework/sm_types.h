@@ -64,6 +64,16 @@ SM_STATIC_ASSERT(SM_ERROR_HISTORY_SIZE > 0 && SM_ERROR_HISTORY_SIZE <= 255,
 SM_STATIC_ASSERT(SM_MAX_TRANSITIONS > 0,
     "SM_MAX_TRANSITIONS must be > 0");
 
+#if SM_FEATURE_DEFER
+SM_STATIC_ASSERT(SM_DEFER_QUEUE_SIZE > 0 && SM_DEFER_QUEUE_SIZE <= 32,
+    "SM_DEFER_QUEUE_SIZE must be between 1 and 32");
+#endif
+
+#if SM_FEATURE_TIME_EVENTS
+SM_STATIC_ASSERT(SM_FEATURE_MAX_TIME_EVENTS > 0 && SM_FEATURE_MAX_TIME_EVENTS <= 64,
+    "SM_FEATURE_MAX_TIME_EVENTS must be between 1 and 64");
+#endif
+
 /* =============================================================================
  * FORWARD DECLARATION / OPAQUE HANDLE
  * ===========================================================================*/
@@ -102,16 +112,24 @@ typedef struct {
 } SM_EventItem_t;
 
 /**
- * @brief ISR-safe event ring buffer
+ * @brief ISR-safe event ring buffer with QP/C frontEvt optimization
  *
  * head = next write position, tail = next read position.
  * count avoids head==tail ambiguity between empty and full.
+ *
+ * frontEvt optimization (D6): when the queue is empty, SM_PostEvent places
+ * the event directly into the front slot instead of the ring buffer. This
+ * avoids a ring-buffer round-trip for the common single-event case.
+ * SM_Process checks the front slot first, then falls through to the ring.
  */
 typedef struct {
     SM_EventItem_t items[SM_EVENT_QUEUE_SIZE]; /**< Ring buffer storage */
+    SM_EventItem_t front;    /**< Front-event slot (bypass ring when empty) */
     volatile uint8_t head;   /**< Next write index */
     volatile uint8_t tail;   /**< Next read index */
-    volatile uint8_t count;  /**< Number of items in queue */
+    volatile uint8_t count;  /**< Number of items in queue (ring only) */
+    volatile bool front_valid; /**< True if front slot holds a pending event */
+    uint8_t nMin;            /**< Watermark: minimum free slots ever seen */
 } SM_EventQueue_t;
 
 /* =============================================================================
@@ -147,6 +165,37 @@ typedef bool (*SM_Guard_t)(SM_Handle_t sm, uint16_t event, uint32_t data);
  * @param data   Event payload
  */
 typedef void (*SM_Action_t)(SM_Handle_t sm, uint16_t event, uint32_t data);
+
+/* =============================================================================
+ * TIME EVENTS (compile-time optional)
+ * ===========================================================================*/
+
+#if SM_FEATURE_TIME_EVENTS
+
+/**
+ * @brief Time event (intrusive linked-list node)
+ *
+ * One-shot or periodic timer that posts an event to the owning state machine
+ * when the down-counter reaches zero. Managed via SM_TimeEvt_Arm /
+ * SM_TimeEvt_Disarm. The linked list is walked by SM_TimeEvt_Tick_() inside
+ * SM_Process().
+ *
+ * Users allocate SM_TimeEvt_t statically and pass them to the API.
+ *
+ * QP/C convention: the event fires when ctr reaches 1 (not 0).  After firing,
+ * ctr is reloaded from interval (0 = one-shot, disarmed after fire).
+ */
+typedef struct SM_TimeEvt {
+    struct SM_TimeEvt *next;   /**< Next node in the per-instance linked list */
+    SM_Handle_t sm;            /**< Owning state machine handle */
+    uint16_t sig;              /**< Event ID to post on expiry */
+    uint16_t _pad;             /**< Alignment padding */
+    uint32_t data;             /**< Event payload to post */
+    uint32_t ctr;              /**< Down-counter (ticks); 0 = disarmed */
+    uint32_t interval;         /**< Auto-reload value (0 = one-shot) */
+} SM_TimeEvt_t;
+
+#endif /* SM_FEATURE_TIME_EVENTS */
 
 /* =============================================================================
  * TRANSITION TABLE
@@ -304,6 +353,10 @@ struct SM_Context {
     volatile uint16_t current_state;   /**< Current state index (volatile for ISR-safe reads) */
     uint16_t previous_state;           /**< Previous state index */
 
+    /* --- DIS (Duplicate Inverse Storage) for safety-critical fields --- */
+    uint16_t state_dis;                /**< Bitwise inverse of current_state (D7) */
+    uint8_t init_dis;                  /**< Bitwise inverse of initialized (D7) */
+
     /* --- State history ring --- */
     uint16_t state_history[SM_STATE_HISTORY_DEPTH]; /**< Recent state transitions */
     uint8_t history_head;              /**< Next write position in history ring */
@@ -315,7 +368,7 @@ struct SM_Context {
     bool timeout_fired;                /**< Prevents repeated timeout events per state entry */
 
     /* --- Event queue --- */
-    SM_EventQueue_t event_queue;       /**< ISR-safe event ring buffer */
+    SM_EventQueue_t event_queue;       /**< ISR-safe event ring buffer with frontEvt */
 
     /* --- Error handler --- */
     SM_ErrorHandler_t error;           /**< Error handling state */
@@ -331,6 +384,16 @@ struct SM_Context {
 #if SM_FEATURE_RUNTIME_TRANSITIONS
     SM_Transition_t rt_transitions[SM_MAX_TRANSITIONS]; /**< Runtime transition table */
     uint16_t rt_transition_count;      /**< Number of runtime transitions */
+#endif
+
+    /* --- Time events (optional, D9) --- */
+#if SM_FEATURE_TIME_EVENTS
+    SM_TimeEvt_t *time_evt_head;       /**< Head of intrusive linked-list of time events */
+#endif
+
+    /* --- Deferred events (optional, D10) --- */
+#if SM_FEATURE_DEFER
+    SM_EventQueue_t defer_queue;       /**< Deferred event ring buffer (SM_DEFER_QUEUE_SIZE) */
 #endif
 
     /* --- Statistics (optional) --- */

@@ -33,6 +33,7 @@ extern "C" {
 #include "sm_config.h"     /* Configuration defaults + user overrides */
 #include "sm_types.h"      /* All types, structs, enums, callbacks */
 #include "sm_platform.h"   /* HAL interface (timing, critical, output, etc.) */
+#include "sm_safety.h"     /* Safety macros: DIS, bounded loops, numeric asserts */
 #include "sm_engine.h"     /* Core API: SM_Init, SM_Process, SM_PostEvent, ... */
 #include "sm_error.h"      /* Error handler API: SM_Error_Report, ... */
 #include "sm_debug.h"      /* Debug API: SM_Debug_Init, SM_LOG_*, ... */
