@@ -10,7 +10,7 @@
  * own app_config.h and define values there to override these defaults.
  *
  * USAGE:
- *   1. Copy config/app_config_template.h to your project as app_config.h
+ *   1. Copy config/sm_config_template.h to your project as app_config.h
  *   2. Define your configuration values in app_config.h
  *   3. Include this header (sm_config.h) - it will use your overrides
  */
@@ -167,30 +167,12 @@
  * ===========================================================================*/
 
 /**
- * @brief Communication packet size
- *
- * Maximum size of communication packets.
- */
-#ifndef COMM_PACKET_SIZE
-#define COMM_PACKET_SIZE (64U)
-#endif
-
-/**
  * @brief Communication timeout in milliseconds
  *
  * Maximum time to wait for communication to complete.
  */
 #ifndef COMM_TIMEOUT_MS
 #define COMM_TIMEOUT_MS (100U)
-#endif
-
-/**
- * @brief Communication retry count
- *
- * Number of times to retry failed communication.
- */
-#ifndef COMM_RETRY_COUNT
-#define COMM_RETRY_COUNT (3U)
 #endif
 
 /**

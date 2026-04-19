@@ -17,7 +17,7 @@ Extends the root `ENGINEERING-PROJECTS/GEMINI.md`. This file defines project-spe
 - **Weak symbol pattern:** Platform implementations use `__attribute__((weak))` so users override only what they need.
 
 ### Configuration
-- **Single source of truth:** All tunable parameters live in `include/sm_framework/sm_config.h` with defaults. Users override via `app_config.h` (copied from `config/app_config_template.h`).
+- **Single source of truth:** All tunable parameters live in `include/sm_framework/sm_config.h` with defaults. Users override via `app_config.h` (copied from `config/sm_config_template.h`).
 - **No magic numbers:** Every constant must be a named `#define` with units in the comment.
 
 ### Build System
@@ -35,7 +35,7 @@ Extends the root `ENGINEERING-PROJECTS/GEMINI.md`. This file defines project-spe
 | `include/sm_framework/sm_framework.h` | Public umbrella header |
 | `src/core/sm_state_machine.c` | Core state machine logic |
 | `src/platform/sm_platform_weak.c` | Default platform HAL |
-| `config/app_config_template.h` | User configuration template |
+| `config/sm_config_template.h` | User configuration template |
 | `CMakeLists.txt` | Build configuration |
 | `README.md` | Full documentation and API reference |
 | `Quick-Guide.md` | Quick start guide |

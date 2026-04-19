@@ -1,5 +1,5 @@
 /**
- * @file app_config_template.h
+ * @file sm_config_template.h
  * @brief User configuration template
  * @version 2.0.0
  *
@@ -7,7 +7,7 @@
  * Include app_config.h BEFORE including sm_framework.h in your main application.
  *
  * USAGE:
- *   1. Copy this file: cp config/app_config_template.h  your_project/app_config.h
+ *   1. Copy this file: cp config/sm_config_template.h  your_project/app_config.h
  *   2. Edit app_config.h with your custom values
  *   3. In your main.c: #include "app_config.h"
  *                      #include "sm_framework/sm_framework.h"
@@ -90,14 +90,8 @@
  * COMMUNICATION CONFIGURATION
  * ===========================================================================*/
 
-/* Packet size */
-#define COMM_PACKET_SIZE (64U)
-
 /* Communication timeout (ms) */
 #define COMM_TIMEOUT_MS (100U)
-
-/* Retry count */
-#define COMM_RETRY_COUNT (3U)
 
 /* Channel verification parameters */
 #define COMM_VERIFICATION_COUNT (3U)         /* Good messages needed */

@@ -398,7 +398,7 @@ xTaskCreate(StateMachineTask, "SM", 512, NULL, 2, NULL);
 
 ### Step 1: Copy Template
 ```bash
-cp config/app_config_template.h your_project/app_config.h
+cp config/sm_config_template.h your_project/app_config.h
 ```
 
 ### Step 2: Edit Values

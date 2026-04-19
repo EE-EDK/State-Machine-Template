@@ -238,7 +238,7 @@ Critical Error (e.g., hardware fault)
 
 ```bash
 # Copy configuration template
-cp config/app_config_template.h your_project/app_config.h
+cp config/sm_config_template.h your_project/app_config.h
 
 # Edit values for your project
 # Then include before framework

@@ -10,7 +10,6 @@
  */
 
 #include "sm_framework/sm_framework.h"
-#include <unistd.h>
 #include <stdio.h>
 #include <unistd.h>
 

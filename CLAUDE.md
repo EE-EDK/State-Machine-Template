@@ -27,11 +27,8 @@ state-machine-template/
 │   ├── basic_example.c
 │   └── simulation_example.c
 ├── config/
-│   └── app_config_template.h   # User config template
+│   └── sm_config_template.h    # User config template
 ├── CMakeLists.txt           # Build system (cmake 3.15+)
-├── App_Config_Template.h    # Legacy config template
-├── app_main.c / app_main.h  # Root-level app entry (legacy convenience copies)
-├── main.c                   # Minimal main() example
 ├── Quick-Guide.md           # Quick reference guide
 └── README.md                # Full documentation
 ```
