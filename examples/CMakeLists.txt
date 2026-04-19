@@ -26,3 +26,39 @@ add_executable(simulation_example
 target_link_libraries(simulation_example PRIVATE
     sm_framework
 )
+
+# Blinky example: timer events
+add_executable(blinky_example
+    blinky_example.c
+)
+
+target_link_libraries(blinky_example PRIVATE
+    sm_framework
+)
+
+# Sensor pipeline: guard conditions
+add_executable(sensor_pipeline_example
+    sensor_pipeline_example.c
+)
+
+target_link_libraries(sensor_pipeline_example PRIVATE
+    sm_framework
+)
+
+# Error recovery: 3-tier error handling
+add_executable(error_recovery_example
+    error_recovery_example.c
+)
+
+target_link_libraries(error_recovery_example PRIVATE
+    sm_framework
+)
+
+# Multi-FSM: two independent state machine instances
+add_executable(multi_fsm_example
+    multi_fsm_example.c
+)
+
+target_link_libraries(multi_fsm_example PRIVATE
+    sm_framework
+)

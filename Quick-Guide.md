@@ -1,670 +1,362 @@
-# Quick Guide - State Machine Framework
+# Quick Guide -- State Machine Framework v3.0
 
-**Practical reference for getting started and everyday use**
-
----
-
-## Table of Contents
-
-1. [5-Minute Quick Start](#5-minute-quick-start)
-2. [Basic Operations](#basic-operations)
-3. [Platform Implementation](#platform-implementation)
-4. [Common Patterns](#common-patterns)
-5. [Configuration Guide](#configuration-guide)
-6. [API Cheat Sheet](#api-cheat-sheet)
-7. [Debugging Tips](#debugging-tips)
-8. [FAQ](#faq)
+Handle-based, multi-instance, zero-heap, ISR-safe state machine framework for embedded C.
 
 ---
 
-## 5-Minute Quick Start
+## Step 1: Define Your States and Events
 
-### Step 1: Get the Code
-```bash
-git clone <repository>
-cd State-Machine-Template
-```
+Define application states and events as enums. Set `SM_STATE_COUNT` and `SM_EVENT_COUNT`
+before including the framework header -- both are mandatory (`#error` if missing).
 
-### Step 2: Build
-```bash
-mkdir build && cd build
-cmake ..
-make -j4
-```
-
-### Step 3: Run Example
-```bash
-./examples/basic_example
-```
-
-### Step 4: Create Your Application
-```c
-#include "sm_framework/sm_framework.h"
-
-int main(void) {
-    /* Your hardware init */
-    HAL_Init();
-    SystemClock_Config();
-
-    /* Framework init */
-    App_Main_Init(COMM_INTERFACE_UART);
-
-    /* Main loop */
-    while (1) {
-        App_Main_Task();
-        HAL_Delay(10);  // Match SM_TASK_PERIOD_MS
-    }
-}
-```
-
-**Done!** The state machine is running.
-
----
-
-## Basic Operations
-
-### Initialize Framework
-```c
-/* Simple initialization */
-if (!App_Main_Init(COMM_INTERFACE_UART)) {
-    /* Handle error */
-    while(1);
-}
-
-/* Or with custom debug interface */
-App_Main_Init(COMM_INTERFACE_SPI);  // Use SPI
-App_Main_Init(COMM_INTERFACE_RTT);  // Use SEGGER RTT
-```
-
-### Post Events (Thread-Safe!)
-```c
-/* From main code */
-StateMachine_PostEvent(EVENT_START);
-StateMachine_PostEvent(EVENT_DATA_READY);
-StateMachine_PostEvent(EVENT_STOP);
-
-/* From interrupt handler */
-void Button_IRQHandler(void) {
-    if (button_pressed) {
-        StateMachine_PostEvent(EVENT_START);  // Safe from ISR
-    }
-    clear_interrupt_flag();
-}
-```
-
-### Query State
-```c
-/* Get current state */
-StateMachineState_t state = StateMachine_GetCurrentState();
-if (state == STATE_ACTIVE) {
-    // Do something
-}
-
-/* Get previous state */
-StateMachineState_t prev = StateMachine_GetPreviousState();
-
-/* Get time in current state */
-uint32_t time_ms = StateMachine_GetStateTime();
-```
-
-### Report Errors
-```c
-/* Minor error - auto-recovery */
-ErrorHandler_Report(ERROR_LEVEL_MINOR, ERROR_CODE_COMM_LOST);
-
-/* Normal error - managed recovery */
-ErrorHandler_Report(ERROR_LEVEL_NORMAL, ERROR_CODE_TIMEOUT);
-
-/* Critical error - system lock */
-ErrorHandler_Report(ERROR_LEVEL_CRITICAL, ERROR_CODE_HARDWARE_FAULT);
-```
-
-### Debug Messages
-```c
-/* Different message types */
-Debug_SendMessage(DEBUG_MSG_INIT, "System starting");
-Debug_SendMessage(DEBUG_MSG_INFO, "Temperature: %d C", temp);
-Debug_SendMessage(DEBUG_MSG_WARNING, "Low battery: %d%%", battery);
-Debug_SendMessage(DEBUG_MSG_ERROR, "Error: %s", ErrorCodeToString(code));
-
-/* Control message types */
-Debug_EnableRuntimeMessages(false);  // Reduce verbosity
-Debug_EnablePeriodicMessages(true);  // Status updates
-```
-
----
-
-## Platform Implementation
-
-### Minimal Implementation (5 Functions)
-
-Create `platform_impl.c` in your project:
-
-```c
-#include "sm_framework/sm_platform.h"
-#include "your_mcu_hal.h"  // Your HAL
-
-/* 1. TIME: Get milliseconds since boot */
-uint32_t Platform_GetTimeMs(void)
-{
-    return HAL_GetTick();  // STM32 HAL example
-}
-
-/* 2. CRITICAL SECTION: Disable interrupts */
-void Platform_EnterCritical(void)
-{
-    __disable_irq();
-}
-
-/* 3. CRITICAL SECTION: Enable interrupts */
-void Platform_ExitCritical(void)
-{
-    __enable_irq();
-}
-
-/* 4. UART: Initialize debug output */
-bool Platform_UART_Init(void)
-{
-    // Already initialized by CubeMX/your setup
-    return true;
-}
-
-/* 5. UART: Send debug data */
-uint32_t Platform_UART_Send(const uint8_t *data, uint32_t length)
-{
-    HAL_UART_Transmit(&huart1, data, length, 100);
-    return length;
-}
-```
-
-### Platform-Specific Examples
-
-#### STM32 with STM32CubeMX HAL
-```c
-extern UART_HandleTypeDef huart1;  // From main.c
-
-uint32_t Platform_GetTimeMs(void) {
-    return HAL_GetTick();
-}
-
-void Platform_EnterCritical(void) {
-    __disable_irq();
-}
-
-void Platform_ExitCritical(void) {
-    __enable_irq();
-}
-
-bool Platform_UART_Init(void) {
-    return true;  // CubeMX already initialized
-}
-
-uint32_t Platform_UART_Send(const uint8_t *data, uint32_t length) {
-    HAL_UART_Transmit(&huart1, data, length, 100);
-    return length;
-}
-```
-
-#### ESP32 with ESP-IDF
-```c
-#include "esp_timer.h"
-#include "driver/uart.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
-uint32_t Platform_GetTimeMs(void) {
-    return (uint32_t)(esp_timer_get_time() / 1000);
-}
-
-void Platform_EnterCritical(void) {
-    taskENTER_CRITICAL();
-}
-
-void Platform_ExitCritical(void) {
-    taskEXIT_CRITICAL();
-}
-
-bool Platform_UART_Init(void) {
-    uart_config_t config = {
-        .baud_rate = 115200,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
-    };
-    uart_param_config(UART_NUM_0, &config);
-    uart_driver_install(UART_NUM_0, 256, 0, 0, NULL, 0);
-    return true;
-}
-
-uint32_t Platform_UART_Send(const uint8_t *data, uint32_t length) {
-    return uart_write_bytes(UART_NUM_0, (const char *)data, length);
-}
-```
-
-#### RP2040 with Pico SDK
-```c
-#include "pico/stdlib.h"
-#include "hardware/uart.h"
-
-uint32_t Platform_GetTimeMs(void) {
-    return to_ms_since_boot(get_absolute_time());
-}
-
-void Platform_EnterCritical(void) {
-    __disable_irq();
-}
-
-void Platform_ExitCritical(void) {
-    __enable_irq();
-}
-
-bool Platform_UART_Init(void) {
-    uart_init(uart0, 115200);
-    gpio_set_function(0, GPIO_FUNC_UART);  // TX
-    gpio_set_function(1, GPIO_FUNC_UART);  // RX
-    return true;
-}
-
-uint32_t Platform_UART_Send(const uint8_t *data, uint32_t length) {
-    uart_write_blocking(uart0, data, length);
-    return length;
-}
-```
-
-#### Bare Metal with SysTick
-```c
-static volatile uint32_t g_systick_ms = 0;
-
-void SysTick_Handler(void) {
-    g_systick_ms++;
-}
-
-uint32_t Platform_GetTimeMs(void) {
-    return g_systick_ms;
-}
-
-void Platform_EnterCritical(void) {
-    __disable_irq();
-}
-
-void Platform_ExitCritical(void) {
-    __enable_irq();
-}
-```
-
-#### FreeRTOS
-```c
-uint32_t Platform_GetTimeMs(void) {
-    return xTaskGetTickCount() * portTICK_PERIOD_MS;
-}
-
-void Platform_EnterCritical(void) {
-    taskENTER_CRITICAL();
-}
-
-void Platform_ExitCritical(void) {
-    taskEXIT_CRITICAL();
-}
-```
-
----
-
-## Common Patterns
-
-### Pattern 1: Wait for State
-```c
-void WaitForIdle(void) {
-    while (StateMachine_GetCurrentState() != STATE_IDLE) {
-        App_Main_Task();
-        HAL_Delay(10);
-    }
-}
-```
-
-### Pattern 2: Safe Shutdown
-```c
-void SafeShutdown(void) {
-    /* Request stop */
-    StateMachine_PostEvent(EVENT_STOP);
-
-    /* Wait for IDLE with timeout */
-    uint32_t start = Platform_GetTimeMs();
-    while (StateMachine_GetCurrentState() != STATE_IDLE) {
-        App_Main_Task();
-
-        if (Platform_IsTimeout(start, 5000)) {
-            /* Force reset if timeout */
-            StateMachine_Reset();
-            break;
-        }
-    }
-}
-```
-
-### Pattern 3: Trigger Processing
-```c
-void ProcessData(uint8_t *data, uint32_t length) {
-    /* Store data somewhere accessible to state machine */
-    memcpy(g_data_buffer, data, length);
-    g_data_length = length;
-
-    /* Trigger processing */
-    StateMachine_PostEvent(EVENT_DATA_READY);
-}
-```
-
-### Pattern 4: Monitor System Health
-```c
-void MonitorSystem(void) {
-    /* Check temperature */
-    if (temperature > MAX_TEMP) {
-        ErrorHandler_Report(ERROR_LEVEL_NORMAL, ERROR_CODE_HARDWARE_FAULT);
-    }
-
-    /* Check battery */
-    if (battery_voltage < MIN_VOLTAGE) {
-        ErrorHandler_Report(ERROR_LEVEL_CRITICAL, ERROR_CODE_HARDWARE_FAULT);
-    }
-
-    /* Check communication */
-    if (comm_packet_lost) {
-        ErrorHandler_Report(ERROR_LEVEL_MINOR, ERROR_CODE_COMM_LOST);
-    }
-}
-```
-
-### Pattern 5: RTOS Task
-```c
-void StateMachineTask(void *pvParameters) {
-    App_Main_Init(COMM_INTERFACE_UART);
-
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xPeriod = pdMS_TO_TICKS(10);  // 10ms
-
-    while (1) {
-        App_Main_Task();
-        vTaskDelayUntil(&xLastWakeTime, xPeriod);
-    }
-}
-
-/* In main() */
-xTaskCreate(StateMachineTask, "SM", 512, NULL, 2, NULL);
-```
-
----
-
-## Configuration Guide
-
-### Step 1: Copy Template
-```bash
-cp config/sm_config_template.h your_project/app_config.h
-```
-
-### Step 2: Edit Values
 ```c
 /* app_config.h */
+#include <stdint.h>
 
-/* Fast response system */
-#define SM_TASK_PERIOD_MS (1U)           // 1ms task period
-#define SM_STATE_TIMEOUT_MS (1000U)      // 1s timeout
+typedef enum {
+    STATE_INIT = 0,
+    STATE_IDLE,
+    STATE_RUNNING,
+    STATE_ERROR
+} AppState_t;
 
-/* Normal system */
-#define SM_TASK_PERIOD_MS (10U)          // 10ms task period
-#define SM_STATE_TIMEOUT_MS (5000U)      // 5s timeout
+typedef enum {
+    EVT_START = 0,
+    EVT_STOP,
+    EVT_FAULT,
+    EVT_RECOVER,
+    EVT_TIMEOUT
+} AppEvent_t;
 
-/* Low power system */
-#define SM_TASK_PERIOD_MS (100U)         // 100ms task period
-#define SM_STATE_TIMEOUT_MS (30000U)     // 30s timeout
-```
-
-### Step 3: Memory Optimization
-```c
-/* Constrained system (< 8KB RAM) */
-#define ERROR_HISTORY_SIZE (4U)          // Minimal history
-#define DEBUG_BUFFER_SIZE (128U)         // Smaller buffer
-#define DEBUG_MAX_MESSAGE_LENGTH (64U)   // Shorter messages
-#define FEATURE_STATISTICS_ENABLED (0U)  // Disable stats
-
-/* Normal system (16KB+ RAM) */
-#define ERROR_HISTORY_SIZE (16U)
-#define DEBUG_BUFFER_SIZE (256U)
-#define DEBUG_MAX_MESSAGE_LENGTH (128U)
-#define FEATURE_STATISTICS_ENABLED (0U)
-
-/* Debug build */
-#define ERROR_HISTORY_SIZE (32U)         // More history
-#define DEBUG_BUFFER_SIZE (512U)         // Bigger buffer
-#define FEATURE_STATISTICS_ENABLED (1U)  // Enable stats
-#define FEATURE_ASSERT_ENABLED (1U)      // Enable asserts
-```
-
-### Step 4: Production Settings
-```c
-/* Disable verbose debug output */
-#define DEBUG_ENABLE_INIT_MESSAGES (0U)
-#define DEBUG_ENABLE_RUNTIME_MESSAGES (0U)
-#define DEBUG_ENABLE_PERIODIC_MESSAGES (1U)  // Keep status updates
-
-/* Optimize for reliability */
-#define ERROR_MAX_RECOVERY_ATTEMPTS (5U)     // More retries
-
-/* Disable development features */
-#define FEATURE_STATISTICS_ENABLED (0U)
-#define FEATURE_ASSERT_ENABLED (0U)
-```
-
-### Step 5: Include in Your Code
-```c
-#include "app_config.h"           // Your configuration
-#include "sm_framework/sm_framework.h"  // Framework
+#define SM_STATE_COUNT  4
+#define SM_EVENT_COUNT  5
 ```
 
 ---
 
-## API Cheat Sheet
+## Step 2: Write State Callbacks
 
-### Initialization
+Each callback receives `SM_Handle_t` -- use it to query state, post events, etc.
+Callbacks must be non-blocking. No delays or infinite loops.
+
 ```c
-bool App_Main_Init(CommInterface_t interface);
-void App_Main_Task(void);
-```
+static void idle_entry(SM_Handle_t sm) {
+    (void)sm;
+    led_off();
+}
 
-### State Machine
-```c
-bool StateMachine_PostEvent(StateMachineEvent_t event);
-StateMachineState_t StateMachine_GetCurrentState(void);
-StateMachineState_t StateMachine_GetPreviousState(void);
-uint32_t StateMachine_GetStateTime(void);
-void StateMachine_Reset(void);
-```
+static void idle_execute(SM_Handle_t sm) {
+    if (SM_GetStateTime(sm) > 10000) {
+        SM_PostEvent(sm, EVT_TIMEOUT, 0);
+    }
+}
 
-### Error Handling
-```c
-bool ErrorHandler_Report(ErrorLevel_t level, ErrorCode_t code);
-bool ErrorHandler_IsCriticalLock(void);
-bool ErrorHandler_GetCurrentError(ErrorInfo_t *error);
-void ErrorHandler_ClearError(void);
-```
-
-### Debug
-```c
-void Debug_SendMessage(DebugMessageType_t type, const char *fmt, ...);
-void Debug_EnableRuntimeMessages(bool enable);
-void Debug_SetInterface(CommInterface_t interface);
-```
-
-### Utilities
-```c
-const char *StateMachine_StateToString(StateMachineState_t state);
-const char *ErrorHandler_CodeToString(ErrorCode_t code);
-bool Platform_IsTimeout(uint32_t start, uint32_t timeout_ms);
-```
-
-### Events
-```c
-EVENT_NONE
-EVENT_INIT_COMPLETE
-EVENT_START
-EVENT_STOP
-EVENT_DATA_READY
-EVENT_PROCESSING_DONE
-EVENT_COMM_REQUEST
-EVENT_COMM_COMPLETE
-EVENT_TIMEOUT
-EVENT_ERROR_MINOR
-EVENT_ERROR_NORMAL
-EVENT_ERROR_CRITICAL
-EVENT_RECOVERY_SUCCESS
-EVENT_RECOVERY_FAILED
-```
-
-### States
-```c
-STATE_INIT
-STATE_IDLE
-STATE_ACTIVE
-STATE_PROCESSING
-STATE_COMMUNICATING
-STATE_MONITORING
-STATE_CALIBRATING
-STATE_DIAGNOSTICS
-STATE_RECOVERY
-STATE_CRITICAL_ERROR
-```
-
----
-
-## Debugging Tips
-
-### Enable Debug Output
-```c
-/* At compile time */
-#define DEBUG_ENABLE_RUNTIME_MESSAGES (1U)
-
-/* At runtime */
-Debug_EnableRuntimeMessages(true);
-Debug_EnablePeriodicMessages(true);
-```
-
-### Trace State Transitions
-```c
-/* Framework automatically logs:
-   "[timestamp] State transition: IDLE -> ACTIVE"
-   "[timestamp] Event START triggers transition IDLE -> ACTIVE"
-*/
-
-/* Or query manually */
-Debug_SendMessage(DEBUG_MSG_INFO, "Current state: %s",
-                 StateMachine_StateToString(StateMachine_GetCurrentState()));
-```
-
-### Monitor Error History
-```c
-ErrorInfo_t error;
-if (ErrorHandler_GetCurrentError(&error)) {
-    Debug_SendMessage(DEBUG_MSG_ERROR,
-        "Active error: %s (retry: %d, recovered: %d)",
-        ErrorHandler_CodeToString(error.code),
-        error.retry_count,
-        error.is_recovered);
+static void idle_exit(SM_Handle_t sm) {
+    (void)sm;
 }
 ```
 
-### Check Periodic Status
+---
+
+## Step 3: Create State Descriptors
+
+Array of `SM_StateDesc_t` indexed by state enum. Lives in flash (const).
+
 ```c
-/* Automatic every DEBUG_PERIODIC_INTERVAL_MS:
-   "[timestamp] State=ACTIVE Exec=1234"
-*/
+static const SM_StateDesc_t states[SM_STATE_COUNT] = {
+    /* STATE_INIT */
+    { .on_entry = init_entry, .on_execute = NULL, .on_exit = NULL,
+      .timeout_ms = 5000, .min_dwell_ms = 0 },
+
+    /* STATE_IDLE */
+    { .on_entry = idle_entry, .on_execute = idle_execute, .on_exit = idle_exit,
+      .timeout_ms = 0, .min_dwell_ms = 100 },
+
+    /* STATE_RUNNING */
+    { .on_entry = run_entry, .on_execute = run_execute, .on_exit = run_exit,
+      .timeout_ms = 30000, .min_dwell_ms = 500 },
+
+    /* STATE_ERROR */
+    { .on_entry = error_entry, .on_execute = NULL, .on_exit = NULL,
+      .timeout_ms = 0, .min_dwell_ms = 0 },
+};
 ```
 
-### Use SEGGER RTT (Best for Real-Time)
-```c
-/* In platform_impl.c */
-#include "SEGGER_RTT.h"
+---
 
-bool Platform_RTT_Init(void) {
-    SEGGER_RTT_Init();
-    return true;
+## Step 4: Create Transition Table
+
+Array of `SM_Transition_t` -- const, lives in flash. Each entry specifies
+source state, triggering event, destination state, optional guard, and optional action.
+
+```c
+static const SM_Transition_t transitions[] = {
+    { STATE_INIT, EVT_START,   STATE_IDLE,    0, NULL,          NULL },
+    { STATE_IDLE, EVT_START,   STATE_RUNNING, 0, is_ready,      log_start },
+    { STATE_RUNNING, EVT_STOP, STATE_IDLE,    0, NULL,          NULL },
+    { STATE_RUNNING, EVT_FAULT, STATE_ERROR,  0, NULL,          log_fault },
+    { STATE_ERROR, EVT_RECOVER, STATE_IDLE,   0, can_recover,   NULL },
+};
+```
+
+---
+
+## Step 5: Initialize and Run
+
+Statically allocate `SM_Context_t`. Fill `SM_Config_t`. Call `SM_Init()` once,
+then call `SM_Process()` periodically.
+
+```c
+#include "app_config.h"
+#include "sm_framework/sm_framework.h"
+
+static SM_Context_t ctx;
+
+int main(void) {
+    SM_Handle_t sm = &ctx;
+
+    SM_Config_t config = {
+        .states           = states,
+        .transitions      = transitions,
+        .transition_count = sizeof(transitions) / sizeof(transitions[0]),
+        .initial_state    = STATE_INIT,
+    };
+
+    if (!SM_Init(sm, &config)) {
+        while (1) { /* init failed */ }
+    }
+
+    while (1) {
+        SM_Process(sm);
+        /* delay SM_TASK_PERIOD_MS (default 10ms) */
+    }
 }
-
-uint32_t Platform_RTT_Send(const uint8_t *data, uint32_t length) {
-    SEGGER_RTT_Write(0, data, length);
-    return length;
-}
-
-/* In main.c */
-App_Main_Init(COMM_INTERFACE_RTT);
 ```
 
 ---
 
-## FAQ
+## Guard Conditions
 
-**Q: Can I call StateMachine_PostEvent() from an interrupt?**
-A: Yes! It's thread-safe and uses critical sections.
+Guards return `true` to allow the transition, `false` to block it.
 
-**Q: What happens if I post an event while one is pending?**
-A: The new event is dropped and the function returns false. Only one pending event allowed.
-
-**Q: Can state callbacks block (use delays)?**
-A: NO! Callbacks must be non-blocking. Use execution counts or timeouts instead.
-
-**Q: How do I implement a delay in a state?**
-A: Use state execution count or time checks:
 ```c
-if (StateMachine_GetExecutionCount() > 10) { /* 10 cycles */ }
-if (StateMachine_GetStateTime() > 1000) { /* 1 second */ }
+static bool is_ready(SM_Handle_t sm, uint16_t event, uint32_t data) {
+    (void)event;
+    (void)data;
+    return (sensor_read() > THRESHOLD) && (SM_GetStateTime(sm) > 200);
+}
 ```
 
-**Q: How do I recover from CRITICAL_ERROR?**
-A: Critical errors require manual reset or watchdog timeout. This is by design for safety.
+---
 
-**Q: Can I add more states?**
-A: Yes! Increase `SM_MAX_STATES` and add your state configuration in the init table.
+## Transition Actions
 
-**Q: How do I change debug output at runtime?**
-A: Use `Debug_SetInterface(COMM_INTERFACE_RTT)` to switch interfaces.
+Actions execute between exit and entry callbacks during a transition.
 
-**Q: What's the memory footprint?**
-A: ~1.5KB RAM, ~6-8KB Flash with typical configuration. See README for optimization.
-
-**Q: Does it work with C++?**
-A: Yes! All headers have `extern "C"` guards for C++ compatibility.
-
-**Q: Can I use this without an RTOS?**
-A: Yes! Works great in bare metal. Just call `App_Main_Task()` in your main loop.
+```c
+static void log_start(SM_Handle_t sm, uint16_t event, uint32_t data) {
+    (void)sm;
+    (void)event;
+    SM_LOG_INFO("system started with data=%u", (unsigned)data);
+}
+```
 
 ---
 
-## Quick Troubleshooting
+## Time Events
 
-### State machine not transitioning
-- ✓ Check `StateMachine_PostEvent()` returns true
-- ✓ Verify transition exists in state table
-- ✓ Ensure `App_Main_Task()` is called regularly
-- ✓ Check if critical error lock is active
+Statically allocate `SM_TimeEvt_t`. Init once, arm/disarm as needed.
+Requires `SM_FEATURE_TIME_EVENTS=1` (default on).
 
-### Debug messages not appearing
-- ✓ Verify `Platform_UART_Init()` returns true
-- ✓ Check message type is enabled
-- ✓ Confirm UART baud rate (115200 default)
-- ✓ Verify TX pin is configured correctly
+```c
+static SM_TimeEvt_t heartbeat_te;
 
-### System stuck in recovery
-- ✓ Check `ERROR_MAX_RECOVERY_ATTEMPTS` value
-- ✓ Verify recovery logic for your error type
-- ✓ Check timeout is reasonable (default 2s)
-- ✓ Ensure error isn't continuously reported
+/* At init */
+SM_TimeEvt_Init(&heartbeat_te, sm, EVT_TIMEOUT, 0);
 
-### Build errors
-- ✓ Include path set correctly
-- ✓ Link with `sm_framework` library
-- ✓ Check all platform functions implemented
-- ✓ Verify C99 standard enabled
+/* Arm: 100 tick initial delay, 100 tick periodic reload */
+SM_TimeEvt_Arm(&heartbeat_te, 100, 100);
+
+/* One-shot: fires once after 500 ticks, interval=0 */
+SM_TimeEvt_Arm(&heartbeat_te, 500, 0);
+
+/* Disarm (returns true if it was armed) */
+SM_TimeEvt_Disarm(&heartbeat_te);
+```
 
 ---
 
-**Need more details?** See [README.md](README.md) for comprehensive documentation.
+## Deferred Events
 
-**Ready to start?** Just implement the 5 platform functions and you're good to go!
+Defer events for later recall. Requires `SM_FEATURE_DEFER=1` (default off).
+Call only from state callbacks -- not ISR-safe.
+
+```c
+/* In on_execute: defer an event the current state cannot handle */
+SM_DeferEvent(sm, EVT_START, 0);
+
+/* In on_entry of another state: recall deferred events (LIFO to front) */
+SM_RecallEvent(sm);
+
+/* Discard all deferred events */
+SM_FlushDeferred(sm);
+```
+
+---
+
+## Error Handling
+
+Three-tier system: MINOR (auto-recover), NORMAL (managed), CRITICAL (system lock).
+
+```c
+/* Report errors */
+SM_Error_Report(sm, SM_ERROR_MINOR, 0x01);     /* auto-recovery */
+SM_Error_Report(sm, SM_ERROR_NORMAL, 0x10);    /* managed recovery */
+SM_Error_Report(sm, SM_ERROR_CRITICAL, 0xFF);  /* system lock, requires reset */
+
+/* Register recovery callback */
+static bool my_recovery(SM_Handle_t sm, uint16_t error_code) {
+    (void)sm;
+    if (error_code == 0x10) {
+        reinit_sensor();
+        return true;   /* recovery succeeded */
+    }
+    return false;      /* recovery failed */
+}
+SM_Error_RegisterRecoveryCallback(sm, my_recovery);
+
+/* Attempt recovery (calls registered callback) */
+SM_Error_AttemptRecovery(sm);
+
+/* Check critical lock (ISR-safe) */
+if (SM_Error_IsCriticalLock(sm)) { /* system is locked */ }
+
+/* Get stats */
+SM_ErrorStats_t stats;
+SM_Error_GetStats(sm, &stats);
+```
+
+---
+
+## Debug Output
+
+Requires `SM_FEATURE_DEBUG=1` (default on). Compile-time level stripping
+via `SM_DEBUG_LEVEL` (0=off, 1=error, 2=+warn, 3=+info, 4=+verbose).
+
+```c
+/* Initialize debug output */
+SM_Debug_Init(0);  /* interface ID 0 = UART, etc. */
+
+/* Log macros (compiled out if level exceeds SM_DEBUG_LEVEL) */
+SM_LOG_ERROR("fault detected: code=%u", code);
+SM_LOG_WARN("battery low: %u mV", voltage);
+SM_LOG_INFO("state entered: %u", SM_GetState(sm));
+SM_LOG_VERBOSE("sensor raw: %u", adc_val);
+
+/* Per-module tags (up to 16) */
+static int8_t tag = -1;
+tag = SM_Debug_RegisterTag("app_sensor");
+SM_LOG_TAG(tag, 3, "temp=%d C", temp);    /* level 3 = info */
+
+/* Runtime control */
+SM_Debug_EnableLevel(4, false);           /* suppress verbose at runtime */
+SM_Debug_EnableTag(tag, false);           /* suppress this module */
+
+/* Hex dump */
+SM_Debug_HexDump(buffer, 32);
+```
+
+---
+
+## Configuration Reference
+
+### Mandatory Defines
+
+| Define | Description |
+|--------|-------------|
+| `SM_STATE_COUNT` | Number of application states |
+| `SM_EVENT_COUNT` | Number of application events |
+
+### Optional Defines (with defaults)
+
+| Define | Default | Description |
+|--------|---------|-------------|
+| `SM_EVENT_QUEUE_SIZE` | 8 | Event ring buffer depth (1-64, 8 bytes/slot) |
+| `SM_MAX_TRANSITIONS` | 32 | Runtime transition table capacity |
+| `SM_ERROR_HISTORY_SIZE` | 8 | Error history ring depth (1-255) |
+| `SM_ERROR_MAX_RECOVERY` | 3 | Max recovery attempts before escalation |
+| `SM_STATE_HISTORY_DEPTH` | 4 | Recent state transition history depth |
+| `SM_DEBUG_LEVEL` | 4 | Compile-time debug level (0-4) |
+| `SM_DEBUG_BUFFER_SIZE` | 256 | Debug output buffer (bytes) |
+| `SM_DEBUG_MSG_MAX_LEN` | 128 | Max single debug message length (bytes) |
+| `SM_TASK_PERIOD_MS` | 10 | Expected SM_Process() call interval (ms) |
+| `SM_DEFER_QUEUE_SIZE` | 4 | Deferred event queue depth (1-32) |
+| `SM_HSM_MAX_DEPTH` | 6 | Max HSM nesting depth |
+
+### Feature Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `SM_FEATURE_DEBUG` | 1 | Debug output subsystem |
+| `SM_FEATURE_ASSERT` | 1 | Runtime assertions |
+| `SM_FEATURE_TIME_EVENTS` | 1 | Time event subsystem |
+| `SM_FEATURE_MAX_TIME_EVENTS` | 16 | Hard bound on time event list walk |
+| `SM_FEATURE_DEFER` | 0 | Deferred event queue |
+| `SM_FEATURE_HSM` | 0 | Hierarchical state machine support |
+| `SM_FEATURE_RUNTIME_TRANSITIONS` | 0 | Runtime transition table modification |
+| `SM_FEATURE_STATISTICS` | 0 | Transition/event/timeout counters |
+
+---
+
+## Platform Porting
+
+Override these `SM_Platform_*` weak-symbol functions for your target.
+Default implementations (in `sm_platform_weak.c`) provide simulation/desktop behavior.
+
+### Required for any real target
+
+| Function | Purpose |
+|----------|---------|
+| `SM_Platform_GetTimeMs(void)` | System time in ms (wraps at ~49.7 days) |
+| `SM_Platform_EnterCritical(void)` | Disable interrupts (must support nesting) |
+| `SM_Platform_ExitCritical(void)` | Re-enable interrupts |
+
+### Debug output
+
+| Function | Purpose |
+|----------|---------|
+| `SM_Platform_OutputInit(uint8_t interface)` | Init debug interface (UART, SPI, RTT) |
+| `SM_Platform_OutputSend(const uint8_t *data, uint32_t len)` | Send debug bytes |
+
+### Optional (no-op defaults)
+
+| Function | Purpose |
+|----------|---------|
+| `SM_Platform_IsTimeout(uint32_t start, uint32_t timeout_ms)` | Timeout check with 32-bit wrap handling |
+| `SM_Platform_GetCriticalNesting(void)` | Query critical section nesting depth |
+| `SM_Platform_WatchdogKick/Start/Stop(...)` | Watchdog timer control |
+| `SM_Platform_EnterSleep/ExitSleep(...)` | Low-power sleep modes |
+| `SM_Platform_NVS_Write/Read(...)` | Non-volatile storage |
+| `SM_Platform_GetResetReason(void)` | Last reset reason (POR, watchdog, etc.) |
+| `SM_Platform_HasCapability(SM_PlatformCap_t cap)` | Runtime capability query |
+| `SM_Platform_Assert(const char *module, int id)` | Assertion handler (numeric ID pattern) |
+
+### STM32 HAL example (minimal)
+
+```c
+uint32_t SM_Platform_GetTimeMs(void) { return HAL_GetTick(); }
+void SM_Platform_EnterCritical(void) { __disable_irq(); }
+void SM_Platform_ExitCritical(void)  { __enable_irq(); }
+```
+
+---
+
+**Build:**
+```bash
+mkdir build && cd build
+cmake .. -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON && cmake --build . && ctest
+```
+
+**Memory:** ~544 bytes RAM baseline. ~580 with deferred events. Zero heap.
+
+**Standard:** C99. All headers have `extern "C"` guards for C++ compatibility.
