@@ -1,144 +1,118 @@
 /**
  * @file sm_config_template.h
- * @brief User configuration template
- * @version 2.0.0
+ * @brief User configuration template for State Machine Framework v3.0
+ * @version 3.0.0
+ * @date 2026-04-18
  *
  * Copy this file to your project as "app_config.h" and customize the values.
- * Include app_config.h BEFORE including sm_framework.h in your main application.
+ * Include app_config.h BEFORE including sm_framework.h in your build.
  *
  * USAGE:
- *   1. Copy this file: cp config/sm_config_template.h  your_project/app_config.h
- *   2. Edit app_config.h with your custom values
- *   3. In your main.c: #include "app_config.h"
- *                      #include "sm_framework/sm_framework.h"
+ *   1. Copy this file: cp config/sm_config_template.h your_project/app_config.h
+ *   2. Define SM_STATE_COUNT and SM_EVENT_COUNT (REQUIRED)
+ *   3. Override any other defaults as needed
+ *   4. Add app_config.h include path to your build system
+ *   5. #include "app_config.h" before #include "sm_framework/sm_framework.h"
  */
 
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
 /* =============================================================================
- * PROJECT IDENTIFICATION
+ * REQUIRED: Application MUST define these
  * ===========================================================================*/
 
-#define PROJECT_NAME "My Embedded Project"
-#define PROJECT_VERSION "1.0.0"
-#define HARDWARE_PLATFORM "Generic"
-
-/* =============================================================================
- * STATE MACHINE CONFIGURATION
- * ===========================================================================*/
-
-/* Maximum number of states (must be >= STATE_MAX) */
-#define SM_MAX_STATES (10U)
-
-/* Maximum transitions per state */
-#define SM_MAX_TRANSITIONS_PER_STATE (5U)
-
-/* Default state timeout in milliseconds */
-#define SM_STATE_TIMEOUT_MS (5000U)
-
-/* Task execution period in milliseconds
- * Adjust based on your system requirements:
- * - Fast response systems: 1-10ms
- * - Normal systems: 10-50ms
- * - Low power systems: 100-1000ms
+/**
+ * @brief Number of states in your FSM
+ *
+ * Must match the number of entries in your state enum.
+ * The framework does NOT define any states -- you define your own.
+ *
+ * Example:
+ *   typedef enum { STATE_INIT = 0, STATE_RUNNING, STATE_STOPPED, MY_STATE_COUNT } MyState_t;
+ *   #define SM_STATE_COUNT  MY_STATE_COUNT
  */
-#define SM_TASK_PERIOD_MS (10U)
+#define SM_STATE_COUNT    (4U)
+
+/**
+ * @brief Number of events in your FSM
+ *
+ * Must match the number of entries in your event enum.
+ *
+ * Example:
+ *   typedef enum { EVT_START = 0, EVT_STOP, EVT_TIMEOUT, MY_EVT_COUNT } MyEvent_t;
+ *   #define SM_EVENT_COUNT  MY_EVT_COUNT
+ */
+#define SM_EVENT_COUNT    (6U)
 
 /* =============================================================================
- * ERROR HANDLING CONFIGURATION
+ * EVENT QUEUE (optional overrides)
  * ===========================================================================*/
 
-/* Maximum recovery attempts for normal errors */
-#define ERROR_MAX_RECOVERY_ATTEMPTS (3U)
-
-/* Minor error retry count */
-#define ERROR_MINOR_RETRY_COUNT (3U)
-
-/* Minor error timeout window (ms) */
-#define ERROR_MINOR_TIMEOUT_MS (50U)
-
-/* Error history buffer size
- * Adjust based on available RAM:
- * - Constrained systems: 4-8 entries
- * - Normal systems: 16-32 entries
- * - Debug builds: 64+ entries
- */
-#define ERROR_HISTORY_SIZE (16U)
+/* #define SM_EVENT_QUEUE_SIZE     (8U)  */  /* Default: 8 events */
 
 /* =============================================================================
- * DEBUG SYSTEM CONFIGURATION
+ * TRANSITION TABLE (optional overrides)
  * ===========================================================================*/
 
-/* Debug buffer size */
-#define DEBUG_BUFFER_SIZE (256U)
-
-/* Maximum debug message length */
-#define DEBUG_MAX_MESSAGE_LENGTH (128U)
-
-/* Enable/disable message types
- * Set to 0 to disable in production builds
- */
-#define DEBUG_ENABLE_INIT_MESSAGES (1U)      /* Initialization messages */
-#define DEBUG_ENABLE_RUNTIME_MESSAGES (1U)   /* Runtime messages */
-#define DEBUG_ENABLE_PERIODIC_MESSAGES (1U)  /* Periodic status */
-
-/* Periodic message interval (ms) */
-#define DEBUG_PERIODIC_INTERVAL_MS (1000U)
+/* #define SM_MAX_TRANSITIONS      (32U) */  /* Runtime transition table size */
 
 /* =============================================================================
- * COMMUNICATION CONFIGURATION
+ * ERROR HANDLING (optional overrides)
  * ===========================================================================*/
 
-/* Communication timeout (ms) */
-#define COMM_TIMEOUT_MS (100U)
-
-/* Channel verification parameters */
-#define COMM_VERIFICATION_COUNT (3U)         /* Good messages needed */
-#define COMM_VERIFICATION_WINDOW_MS (50U)    /* Verification window */
+/* #define SM_ERROR_HISTORY_SIZE   (8U)  */  /* Error history ring size */
+/* #define SM_ERROR_MAX_RECOVERY   (3U)  */  /* Max recovery attempts */
 
 /* =============================================================================
- * FEATURE FLAGS
+ * STATE HISTORY (optional overrides)
  * ===========================================================================*/
 
-/* Enable runtime statistics collection
- * Set to 1 to collect transition counts, timing, etc.
- * Adds ~100 bytes RAM overhead
- */
-#define FEATURE_STATISTICS_ENABLED (0U)
-
-/* Enable runtime assertions
- * Set to 1 for development, 0 for production
- */
-#define FEATURE_ASSERT_ENABLED (1U)
+/* #define SM_STATE_HISTORY_DEPTH  (4U)  */  /* State history ring depth */
 
 /* =============================================================================
- * PLATFORM-SPECIFIC SETTINGS (EXAMPLES)
+ * DEBUG (optional overrides)
+ * ===========================================================================*/
+
+/* #define SM_DEBUG_LEVEL          (4U)  */  /* 0=off, 1=err, 2=+warn, 3=+info, 4=+verbose */
+/* #define SM_DEBUG_BUFFER_SIZE    (256U) */ /* Output buffer size */
+/* #define SM_DEBUG_MSG_MAX_LEN    (128U) */ /* Max single message length */
+
+/* =============================================================================
+ * FEATURE FLAGS (optional overrides)
+ * ===========================================================================*/
+
+/* #define SM_FEATURE_HSM                   (0U) */  /* Hierarchical states */
+/* #define SM_FEATURE_RUNTIME_TRANSITIONS   (0U) */  /* Runtime transition API */
+/* #define SM_FEATURE_STATISTICS            (0U) */  /* Statistics collection */
+/* #define SM_FEATURE_DEBUG                 (1U) */  /* Debug output */
+/* #define SM_FEATURE_ASSERT                (1U) */  /* Runtime assertions */
+
+/* =============================================================================
+ * TASK PERIOD (optional override)
+ * ===========================================================================*/
+
+/* #define SM_TASK_PERIOD_MS       (10U) */  /* SM_Process call interval */
+
+/* =============================================================================
+ * PLATFORM-SPECIFIC SETTINGS (examples)
  * ===========================================================================*/
 
 #if defined(STM32F407xx)
-    /* STM32F4 specific settings */
+    /* STM32F4 specific */
     #define SYSTEM_CLOCK_HZ (168000000UL)
-    #define FLASH_SIZE_KB (1024U)
-    #define RAM_SIZE_KB (192U)
 
 #elif defined(ESP32)
-    /* ESP32 specific settings */
+    /* ESP32 specific */
     #define SYSTEM_CLOCK_HZ (240000000UL)
-    #define FLASH_SIZE_KB (4096U)
-    #define RAM_SIZE_KB (520U)
 
 #elif defined(RP2040)
-    /* RP2040 specific settings */
+    /* RP2040 specific */
     #define SYSTEM_CLOCK_HZ (133000000UL)
-    #define FLASH_SIZE_KB (2048U)
-    #define RAM_SIZE_KB (264U)
 
 #else
-    /* Generic/simulation */
+    /* Generic / simulation */
     #define SYSTEM_CLOCK_HZ (100000000UL)
-    #define FLASH_SIZE_KB (512U)
-    #define RAM_SIZE_KB (128U)
 #endif
 
 #endif /* APP_CONFIG_H */

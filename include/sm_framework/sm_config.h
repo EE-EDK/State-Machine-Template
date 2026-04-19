@@ -1,64 +1,75 @@
 /**
  * @file sm_config.h
- * @brief Configuration defaults for State Machine Framework
- * @version 2.0.0
- * @date 2025-12-30
+ * @brief Configuration defaults for State Machine Framework v3.0
+ * @version 3.0.0
+ * @date 2026-04-18
  *
- * @copyright Copyright (c) 2025
+ * @copyright Copyright (c) 2025-2026
  *
- * This file provides default configuration values. Users should create their
- * own app_config.h and define values there to override these defaults.
+ * Compile-time configuration with #ifndef override pattern.
+ * Users define values in their app_config.h BEFORE including sm_framework.h.
+ *
+ * REQUIRED: Application MUST define SM_STATE_COUNT and SM_EVENT_COUNT.
  *
  * USAGE:
  *   1. Copy config/sm_config_template.h to your project as app_config.h
- *   2. Define your configuration values in app_config.h
- *   3. Include this header (sm_config.h) - it will use your overrides
+ *   2. Define SM_STATE_COUNT and SM_EVENT_COUNT (mandatory)
+ *   3. Override any other defaults as needed
+ *   4. #include "app_config.h" BEFORE #include "sm_framework/sm_framework.h"
  */
 
 #ifndef SM_CONFIG_H
 #define SM_CONFIG_H
 
 /* =============================================================================
- * STATE MACHINE CONFIGURATION
+ * MANDATORY: APPLICATION MUST DEFINE THESE
  * ===========================================================================*/
 
 /**
- * @brief Maximum number of states the state machine can handle
+ * @brief Number of states in the application FSM
  *
- * Increase this if you need more than 10 states. Must be >= STATE_MAX.
+ * User MUST define this in app_config.h. The framework does not define any
+ * application states -- the user provides their own enum.
  */
-#ifndef SM_MAX_STATES
-#define SM_MAX_STATES (10U)
+#ifndef SM_STATE_COUNT
+#error "SM_STATE_COUNT must be defined by the application in app_config.h"
 #endif
 
 /**
- * @brief Maximum number of transitions per state
+ * @brief Number of events in the application FSM
  *
- * Each state can have up to this many defined transitions.
+ * User MUST define this in app_config.h. The framework does not define any
+ * application events -- the user provides their own enum.
  */
-#ifndef SM_MAX_TRANSITIONS_PER_STATE
-#define SM_MAX_TRANSITIONS_PER_STATE (5U)
+#ifndef SM_EVENT_COUNT
+#error "SM_EVENT_COUNT must be defined by the application in app_config.h"
 #endif
 
-/**
- * @brief Default state timeout in milliseconds
- *
- * Used when a state doesn't specify a custom timeout.
- */
-#ifndef SM_STATE_TIMEOUT_MS
-#define SM_STATE_TIMEOUT_MS (5000U)
-#endif
+/* =============================================================================
+ * EVENT QUEUE CONFIGURATION
+ * ===========================================================================*/
 
 /**
- * @brief State machine task execution period in milliseconds
+ * @brief Size of the ISR-safe event ring buffer
  *
- * How often App_Main_Task() should be called.
- * - Fast systems: 1-10ms
- * - Normal systems: 10-50ms
- * - Low power systems: 100-1000ms
+ * Must be > 0 and <= 64. Larger values use more RAM but reduce event drops.
+ * Each slot is 8 bytes (SM_EventItem_t).
  */
-#ifndef SM_TASK_PERIOD_MS
-#define SM_TASK_PERIOD_MS (10U)
+#ifndef SM_EVENT_QUEUE_SIZE
+#define SM_EVENT_QUEUE_SIZE          (8U)
+#endif
+
+/* =============================================================================
+ * TRANSITION TABLE CONFIGURATION
+ * ===========================================================================*/
+
+/**
+ * @brief Maximum number of runtime transitions (when SM_FEATURE_RUNTIME_TRANSITIONS=1)
+ *
+ * Only used if SM_FEATURE_RUNTIME_TRANSITIONS is enabled.
+ */
+#ifndef SM_MAX_TRANSITIONS
+#define SM_MAX_TRANSITIONS           (32U)
 #endif
 
 /* =============================================================================
@@ -66,131 +77,65 @@
  * ===========================================================================*/
 
 /**
- * @brief Maximum number of recovery attempts for normal errors
- *
- * After this many failed recovery attempts, error escalates to critical.
- */
-#ifndef ERROR_MAX_RECOVERY_ATTEMPTS
-#define ERROR_MAX_RECOVERY_ATTEMPTS (3U)
-#endif
-
-/**
- * @brief Number of retries for minor errors before escalation
- *
- * Minor errors attempt auto-recovery this many times.
- */
-#ifndef ERROR_MINOR_RETRY_COUNT
-#define ERROR_MINOR_RETRY_COUNT (3U)
-#endif
-
-/**
- * @brief Timeout for minor error recovery window in milliseconds
- *
- * Minor error must be resolved within this time or escalates to normal error.
- */
-#ifndef ERROR_MINOR_TIMEOUT_MS
-#define ERROR_MINOR_TIMEOUT_MS (50U)
-#endif
-
-/**
  * @brief Size of circular error history buffer
  *
- * Keeps track of last N errors for debugging.
- * - Small systems: 4-8 entries
- * - Normal systems: 16-32 entries
- * - Debug builds: 64+ entries
+ * Must be > 0 and <= 255. Each entry is ~16 bytes (SM_ErrorInfo_t).
  */
-#ifndef ERROR_HISTORY_SIZE
-#define ERROR_HISTORY_SIZE (16U)
+#ifndef SM_ERROR_HISTORY_SIZE
+#define SM_ERROR_HISTORY_SIZE        (8U)
+#endif
+
+/**
+ * @brief Maximum recovery attempts before escalation to critical
+ */
+#ifndef SM_ERROR_MAX_RECOVERY
+#define SM_ERROR_MAX_RECOVERY        (3U)
 #endif
 
 /* =============================================================================
- * DEBUG SYSTEM CONFIGURATION
+ * STATE HISTORY CONFIGURATION
  * ===========================================================================*/
 
 /**
- * @brief Debug message buffer size
+ * @brief Depth of state history ring buffer
  *
- * Maximum size of formatted debug output buffer.
+ * Stores the last N state transitions for debugging.
  */
-#ifndef DEBUG_BUFFER_SIZE
-#define DEBUG_BUFFER_SIZE (256U)
-#endif
-
-/**
- * @brief Maximum debug message length
- *
- * Maximum length of a single debug message string.
- */
-#ifndef DEBUG_MAX_MESSAGE_LENGTH
-#define DEBUG_MAX_MESSAGE_LENGTH (128U)
-#endif
-
-/**
- * @brief Enable initialization debug messages
- *
- * Set to 0 to disable init messages in production.
- */
-#ifndef DEBUG_ENABLE_INIT_MESSAGES
-#define DEBUG_ENABLE_INIT_MESSAGES (1U)
-#endif
-
-/**
- * @brief Enable runtime debug messages
- *
- * Set to 0 to disable runtime messages in production.
- */
-#ifndef DEBUG_ENABLE_RUNTIME_MESSAGES
-#define DEBUG_ENABLE_RUNTIME_MESSAGES (1U)
-#endif
-
-/**
- * @brief Enable periodic debug messages
- *
- * Set to 0 to disable periodic status messages in production.
- */
-#ifndef DEBUG_ENABLE_PERIODIC_MESSAGES
-#define DEBUG_ENABLE_PERIODIC_MESSAGES (1U)
-#endif
-
-/**
- * @brief Interval for periodic debug messages in milliseconds
- *
- * How often to send periodic status updates.
- */
-#ifndef DEBUG_PERIODIC_INTERVAL_MS
-#define DEBUG_PERIODIC_INTERVAL_MS (1000U)
+#ifndef SM_STATE_HISTORY_DEPTH
+#define SM_STATE_HISTORY_DEPTH       (4U)
 #endif
 
 /* =============================================================================
- * COMMUNICATION CONFIGURATION
+ * DEBUG CONFIGURATION
  * ===========================================================================*/
 
 /**
- * @brief Communication timeout in milliseconds
+ * @brief Debug verbosity level (compile-time)
  *
- * Maximum time to wait for communication to complete.
+ * 0 = off (all debug compiled out)
+ * 1 = error only
+ * 2 = error + warn
+ * 3 = error + warn + info
+ * 4 = all (error + warn + info + verbose)
  */
-#ifndef COMM_TIMEOUT_MS
-#define COMM_TIMEOUT_MS (100U)
+#ifndef SM_DEBUG_LEVEL
+#define SM_DEBUG_LEVEL               (4U)
 #endif
 
 /**
- * @brief Number of good messages needed to verify channel
+ * @brief Debug output buffer size (bytes)
  *
- * Used for minor error recovery - need this many consecutive good messages.
+ * Must be >= SM_DEBUG_MSG_MAX_LEN.
  */
-#ifndef COMM_VERIFICATION_COUNT
-#define COMM_VERIFICATION_COUNT (3U)
+#ifndef SM_DEBUG_BUFFER_SIZE
+#define SM_DEBUG_BUFFER_SIZE         (256U)
 #endif
 
 /**
- * @brief Verification window in milliseconds
- *
- * Good messages must arrive within this window to verify channel.
+ * @brief Maximum single debug message length (bytes)
  */
-#ifndef COMM_VERIFICATION_WINDOW_MS
-#define COMM_VERIFICATION_WINDOW_MS (50U)
+#ifndef SM_DEBUG_MSG_MAX_LEN
+#define SM_DEBUG_MSG_MAX_LEN         (128U)
 #endif
 
 /* =============================================================================
@@ -198,41 +143,69 @@
  * ===========================================================================*/
 
 /**
+ * @brief Enable hierarchical state machine (HSM) support
+ *
+ * When 0 (default): flat FSM, no parent field in state descriptors.
+ * When 1: each SM_StateDesc_t has a parent field for nested states.
+ */
+#ifndef SM_FEATURE_HSM
+#define SM_FEATURE_HSM               (0U)
+#endif
+
+/**
+ * @brief Enable runtime transition table modification
+ *
+ * When 0 (default): only const flash transition table is used.
+ * When 1: SM_AddTransition() API is available for runtime additions.
+ */
+#ifndef SM_FEATURE_RUNTIME_TRANSITIONS
+#define SM_FEATURE_RUNTIME_TRANSITIONS (0U)
+#endif
+
+/**
  * @brief Enable statistics collection
  *
- * Collects runtime statistics (transitions, errors, timing, etc.)
+ * When 0 (default): no statistics overhead.
+ * When 1: transition counts, event counts, timeout counts tracked.
  */
-#ifndef FEATURE_STATISTICS_ENABLED
-#define FEATURE_STATISTICS_ENABLED (0U)
+#ifndef SM_FEATURE_STATISTICS
+#define SM_FEATURE_STATISTICS        (0U)
+#endif
+
+/**
+ * @brief Enable debug output subsystem
+ *
+ * When 0: all SM_Debug_* functions become no-ops, zero code/RAM overhead.
+ * When 1 (default): debug output enabled at level set by SM_DEBUG_LEVEL.
+ */
+#ifndef SM_FEATURE_DEBUG
+#define SM_FEATURE_DEBUG             (1U)
 #endif
 
 /**
  * @brief Enable runtime assertions
  *
- * Enable assert checks for development/debugging.
+ * When 0: SM_ASSERT() compiles to ((void)0).
+ * When 1 (default): SM_ASSERT() calls SM_Platform_Assert() on failure.
  */
-#ifndef FEATURE_ASSERT_ENABLED
-#define FEATURE_ASSERT_ENABLED (1U)
+#ifndef SM_FEATURE_ASSERT
+#define SM_FEATURE_ASSERT            (1U)
 #endif
 
 /* =============================================================================
- * CONFIGURATION VALIDATION
+ * TASK PERIOD
  * ===========================================================================*/
 
-#if (SM_TASK_PERIOD_MS == 0)
-#error "SM_TASK_PERIOD_MS cannot be zero"
-#endif
-
-#if (ERROR_MAX_RECOVERY_ATTEMPTS == 0)
-#warning "ERROR_MAX_RECOVERY_ATTEMPTS is zero - no recovery will be attempted"
-#endif
-
-#if (DEBUG_MAX_MESSAGE_LENGTH < 32)
-#warning "DEBUG_MAX_MESSAGE_LENGTH is very small - messages may be truncated"
-#endif
-
-#if (SM_MAX_STATES < STATE_MAX)
-#error "SM_MAX_STATES must be >= STATE_MAX"
+/**
+ * @brief State machine task execution period in milliseconds
+ *
+ * How often SM_Process() should be called.
+ * - Fast systems: 1-10ms
+ * - Normal systems: 10-50ms
+ * - Low power systems: 100-1000ms
+ */
+#ifndef SM_TASK_PERIOD_MS
+#define SM_TASK_PERIOD_MS            (10U)
 #endif
 
 #endif /* SM_CONFIG_H */

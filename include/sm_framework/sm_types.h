@@ -1,13 +1,17 @@
 /**
  * @file sm_types.h
- * @brief Common type definitions for State Machine Framework
- * @version 2.0.0
- * @date 2025-12-30
+ * @brief All type definitions for State Machine Framework v3.0
+ * @version 3.0.0
+ * @date 2026-04-18
  *
- * @copyright Copyright (c) 2025
+ * @copyright Copyright (c) 2025-2026
  *
- * This file contains all common type definitions, enumerations, and structures
- * used throughout the state machine framework.
+ * Contains all structs, enums, typedefs, and callback signatures used by the
+ * framework. The framework is state-agnostic -- application states and events
+ * are user-defined enums, not defined here.
+ *
+ * The SM_Context struct is defined here (visible for static allocation) but
+ * users must access it ONLY through the SM_* API (handle-based convention).
  */
 
 #ifndef SM_TYPES_H
@@ -21,229 +25,322 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 
-/* Include user configuration */
+/* Include configuration (must come first -- types depend on config values) */
 #include "sm_config.h"
 
 /* =============================================================================
- * STATE AND EVENT ENUMERATIONS
+ * COMPILE-TIME VALIDATION
+ *
+ * _Static_assert is C11. For C99 compatibility, fall back to a negative-size
+ * array trick that produces a compile error on failure.
+ * ===========================================================================*/
+
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+    /* C11 or later -- use _Static_assert directly */
+    #define SM_STATIC_ASSERT(expr, msg) _Static_assert(expr, msg)
+#else
+    /* C99 fallback: negative-size array trick */
+    #define SM_STATIC_ASSERT_JOIN2(a, b) a ## b
+    #define SM_STATIC_ASSERT_JOIN(a, b) SM_STATIC_ASSERT_JOIN2(a, b)
+    #define SM_STATIC_ASSERT(expr, msg) \
+        typedef char SM_STATIC_ASSERT_JOIN(sm_static_assert_, __LINE__) [(expr) ? 1 : -1]
+#endif
+
+SM_STATIC_ASSERT(SM_EVENT_QUEUE_SIZE > 0 && SM_EVENT_QUEUE_SIZE <= 64,
+    "SM_EVENT_QUEUE_SIZE must be between 1 and 64");
+
+SM_STATIC_ASSERT(SM_STATE_COUNT > 0 && SM_STATE_COUNT <= 255,
+    "SM_STATE_COUNT must be between 1 and 255");
+
+SM_STATIC_ASSERT(SM_EVENT_COUNT > 0 && SM_EVENT_COUNT <= 65535,
+    "SM_EVENT_COUNT must be between 1 and 65535");
+
+SM_STATIC_ASSERT(SM_DEBUG_BUFFER_SIZE >= SM_DEBUG_MSG_MAX_LEN,
+    "SM_DEBUG_BUFFER_SIZE must be >= SM_DEBUG_MSG_MAX_LEN");
+
+SM_STATIC_ASSERT(SM_ERROR_HISTORY_SIZE > 0 && SM_ERROR_HISTORY_SIZE <= 255,
+    "SM_ERROR_HISTORY_SIZE must be between 1 and 255");
+
+SM_STATIC_ASSERT(SM_MAX_TRANSITIONS > 0,
+    "SM_MAX_TRANSITIONS must be > 0");
+
+/* =============================================================================
+ * FORWARD DECLARATION / OPAQUE HANDLE
  * ===========================================================================*/
 
 /**
- * @brief State machine states
+ * @brief State machine context (forward declaration)
  *
- * These are the predefined states. Users can extend by adding more states
- * before STATE_MAX and increasing SM_MAX_STATES in configuration.
+ * Defined fully at the bottom of this file. Users statically allocate this
+ * struct but must only access it via SM_* API functions.
  */
-typedef enum {
-    STATE_INIT = 0,          /**< Initialization state */
-    STATE_IDLE,              /**< Idle/waiting state */
-    STATE_ACTIVE,            /**< Active monitoring state */
-    STATE_PROCESSING,        /**< Data processing state */
-    STATE_COMMUNICATING,     /**< Communication state */
-    STATE_MONITORING,        /**< Health monitoring state */
-    STATE_CALIBRATING,       /**< Calibration state */
-    STATE_DIAGNOSTICS,       /**< Diagnostic state */
-    STATE_RECOVERY,          /**< Error recovery state */
-    STATE_CRITICAL_ERROR,    /**< Critical error lock state */
-    STATE_MAX                /**< Number of states (must be last) */
-} StateMachineState_t;
+typedef struct SM_Context SM_Context_t;
 
 /**
- * @brief State machine events
+ * @brief Opaque handle to a state machine instance
  *
- * Events trigger state transitions. Users can extend by adding more events
- * before EVENT_MAX.
+ * Multiple instances supported -- user allocates SM_Context_t statically
+ * and passes &ctx as the handle.
  */
-typedef enum {
-    EVENT_NONE = 0,          /**< No event pending */
-    EVENT_INIT_COMPLETE,     /**< Initialization completed */
-    EVENT_START,             /**< Start operation */
-    EVENT_STOP,              /**< Stop operation */
-    EVENT_DATA_READY,        /**< Data ready for processing */
-    EVENT_PROCESSING_DONE,   /**< Processing completed */
-    EVENT_COMM_REQUEST,      /**< Communication requested */
-    EVENT_COMM_COMPLETE,     /**< Communication completed */
-    EVENT_TIMEOUT,           /**< State timeout occurred */
-    EVENT_ERROR_MINOR,       /**< Minor error reported */
-    EVENT_ERROR_NORMAL,      /**< Normal error reported */
-    EVENT_ERROR_CRITICAL,    /**< Critical error reported */
-    EVENT_RECOVERY_SUCCESS,  /**< Recovery successful */
-    EVENT_RECOVERY_FAILED,   /**< Recovery failed */
-    EVENT_MAX                /**< Number of events (must be last) */
-} StateMachineEvent_t;
+typedef SM_Context_t *SM_Handle_t;
+
+/* =============================================================================
+ * EVENT TYPES
+ * ===========================================================================*/
+
+/**
+ * @brief Event item stored in the ring buffer
+ *
+ * 8 bytes on 32-bit ARM (with explicit padding).
+ * event is uint16_t to support up to 65535 user-defined events.
+ * data is a uint32_t payload carried with every event.
+ */
+typedef struct {
+    uint16_t event;       /**< User-defined event ID */
+    uint16_t _reserved;   /**< Alignment padding (explicit) */
+    uint32_t data;        /**< Event payload */
+} SM_EventItem_t;
+
+/**
+ * @brief ISR-safe event ring buffer
+ *
+ * head = next write position, tail = next read position.
+ * count avoids head==tail ambiguity between empty and full.
+ */
+typedef struct {
+    SM_EventItem_t items[SM_EVENT_QUEUE_SIZE]; /**< Ring buffer storage */
+    volatile uint8_t head;   /**< Next write index */
+    volatile uint8_t tail;   /**< Next read index */
+    volatile uint8_t count;  /**< Number of items in queue */
+} SM_EventQueue_t;
+
+/* =============================================================================
+ * CALLBACK SIGNATURES
+ * ===========================================================================*/
+
+/**
+ * @brief State callback (entry, execute, exit)
+ *
+ * Receives handle so callbacks can query state, post events, etc.
+ *
+ * @param sm Handle to the state machine instance
+ */
+typedef void (*SM_StateCallback_t)(SM_Handle_t sm);
+
+/**
+ * @brief Guard condition for a transition
+ *
+ * Returns true to allow the transition, false to block it.
+ *
+ * @param sm   Handle to the state machine instance
+ * @param event  Event ID that triggered the transition check
+ * @param data   Event payload
+ * @return true if transition should proceed, false to block
+ */
+typedef bool (*SM_Guard_t)(SM_Handle_t sm, uint16_t event, uint32_t data);
+
+/**
+ * @brief Action executed during a transition (between exit and entry)
+ *
+ * @param sm   Handle to the state machine instance
+ * @param event  Event ID that triggered the transition
+ * @param data   Event payload
+ */
+typedef void (*SM_Action_t)(SM_Handle_t sm, uint16_t event, uint32_t data);
+
+/* =============================================================================
+ * TRANSITION TABLE
+ * ===========================================================================*/
+
+/**
+ * @brief Transition definition (const, lives in flash)
+ *
+ * Defines: when in from_state and event occurs, if guard allows,
+ * execute action and move to to_state.
+ */
+typedef struct {
+    uint16_t from_state;   /**< Source state index */
+    uint16_t event;        /**< Event that triggers this transition */
+    uint16_t to_state;     /**< Destination state index */
+    uint16_t _reserved;    /**< Alignment padding */
+    SM_Guard_t guard;      /**< Guard condition (NULL = always allow) */
+    SM_Action_t action;    /**< Transition action (NULL = no action) */
+} SM_Transition_t;
+
+/* =============================================================================
+ * STATE DESCRIPTOR
+ * ===========================================================================*/
+
+/**
+ * @brief State descriptor (const, lives in flash)
+ *
+ * Defines callbacks and timing constraints for a single state.
+ * Array of these is indexed by state ID.
+ */
+typedef struct {
+    SM_StateCallback_t on_entry;   /**< Called once on state entry */
+    SM_StateCallback_t on_execute; /**< Called every SM_Process() cycle while in state */
+    SM_StateCallback_t on_exit;    /**< Called once on state exit */
+    uint32_t timeout_ms;           /**< Auto-timeout (0 = no timeout) */
+    uint32_t min_dwell_ms;         /**< Minimum time before transitions allowed (0 = none) */
+#if SM_FEATURE_HSM
+    uint16_t parent;               /**< Parent state index (UINT16_MAX = no parent) */
+#endif
+} SM_StateDesc_t;
 
 /* =============================================================================
  * ERROR HANDLING TYPES
  * ===========================================================================*/
 
 /**
- * @brief Error severity levels
+ * @brief Error severity levels (framework-defined)
+ *
+ * MINOR:    Auto-recovery, no state change
+ * NORMAL:   Managed recovery, application handles
+ * CRITICAL: System lock, requires reset
  */
 typedef enum {
-    ERROR_LEVEL_NONE = 0,    /**< No error */
-    ERROR_LEVEL_MINOR,       /**< Minor error - auto-recovery */
-    ERROR_LEVEL_NORMAL,      /**< Normal error - managed recovery */
-    ERROR_LEVEL_CRITICAL,    /**< Critical error - system lock */
-    ERROR_LEVEL_MAX          /**< Number of error levels (must be last) */
-} ErrorLevel_t;
+    SM_ERROR_NONE = 0,        /**< No error */
+    SM_ERROR_MINOR,           /**< Minor -- auto-recovery */
+    SM_ERROR_NORMAL,          /**< Normal -- managed recovery */
+    SM_ERROR_CRITICAL,        /**< Critical -- system lock */
+    SM_ERROR_LEVEL_COUNT      /**< Number of error levels (sentinel) */
+} SM_ErrorLevel_t;
 
 /**
- * @brief Error codes
+ * @brief Error information record
  *
- * Specific error conditions. Users can extend.
- */
-typedef enum {
-    ERROR_CODE_NONE = 0,             /**< No error */
-    ERROR_CODE_TIMEOUT,              /**< Operation timeout */
-    ERROR_CODE_COMM_LOST,            /**< Communication lost */
-    ERROR_CODE_COMM_CORRUPT,         /**< Corrupted communication */
-    ERROR_CODE_INVALID_DATA,         /**< Invalid data received */
-    ERROR_CODE_BUFFER_OVERFLOW,      /**< Buffer overflow */
-    ERROR_CODE_RESOURCE_UNAVAILABLE, /**< Resource not available */
-    ERROR_CODE_CALIBRATION_FAILED,   /**< Calibration failed */
-    ERROR_CODE_HARDWARE_FAULT,       /**< Hardware fault detected */
-    ERROR_CODE_WATCHDOG_RESET,       /**< Watchdog reset occurred */
-    ERROR_CODE_MEMORY_CORRUPTION,    /**< Memory corruption detected */
-    ERROR_CODE_MAX                   /**< Number of error codes (must be last) */
-} ErrorCode_t;
-
-/**
- * @brief Error information structure
- *
- * Stores detailed information about an error occurrence.
+ * Stored in history ring buffer and as current error.
  */
 typedef struct {
-    ErrorLevel_t level;          /**< Error severity level */
-    ErrorCode_t code;            /**< Specific error code */
-    uint32_t timestamp;          /**< Time when error occurred */
-    StateMachineState_t state;   /**< State when error occurred */
-    uint8_t retry_count;         /**< Number of recovery attempts */
-    bool is_recovered;           /**< Recovery status */
-} ErrorInfo_t;
+    SM_ErrorLevel_t level;    /**< Error severity */
+    uint16_t code;            /**< User-defined error code */
+    uint16_t state;           /**< State index when error occurred */
+    uint32_t timestamp;       /**< Time of error (ms) */
+    uint8_t retry_count;      /**< Recovery attempts so far */
+    bool recovered;           /**< True if recovery succeeded */
+} SM_ErrorInfo_t;
+
+/**
+ * @brief Error handler context (embedded in SM_Context)
+ */
+typedef struct {
+    SM_ErrorInfo_t current;                          /**< Current active error */
+    SM_ErrorInfo_t history[SM_ERROR_HISTORY_SIZE];    /**< Error history ring */
+    uint8_t history_index;                           /**< Next write position in history */
+    uint8_t history_count;                           /**< Actual entries in history (not always max) */
+    bool minor_active;                               /**< Minor error in progress */
+    uint32_t minor_timestamp;                        /**< When minor error started */
+    volatile bool critical_lock;                     /**< Critical error lock (volatile for ISR access) */
+} SM_ErrorHandler_t;
+
+/**
+ * @brief Error recovery callback
+ *
+ * User-provided function to attempt recovery from a specific error.
+ *
+ * @param sm         Handle to the state machine instance
+ * @param error_code User-defined error code
+ * @return true if recovery succeeded, false if failed
+ */
+typedef bool (*SM_RecoveryCallback_t)(SM_Handle_t sm, uint16_t error_code);
+
+/**
+ * @brief Error notification callback
+ *
+ * Called when any error is reported, regardless of level.
+ *
+ * @param sm    Handle to the state machine instance
+ * @param level Error severity
+ * @param code  User-defined error code
+ */
+typedef void (*SM_ErrorCallback_t)(SM_Handle_t sm, SM_ErrorLevel_t level, uint16_t code);
 
 /* =============================================================================
- * DEBUG SYSTEM TYPES
+ * STATISTICS (compile-time optional)
+ * ===========================================================================*/
+
+#if SM_FEATURE_STATISTICS
+
+/**
+ * @brief Runtime statistics counters
+ */
+typedef struct {
+    uint32_t total_transitions;                  /**< Total state transitions */
+    uint32_t total_events_posted;                /**< Total events posted */
+    uint32_t total_events_dropped;               /**< Events dropped (queue full) */
+    uint32_t total_timeouts;                     /**< State timeouts fired */
+    uint32_t state_entry_counts[SM_STATE_COUNT]; /**< Per-state entry count */
+} SM_Stats_t;
+
+#endif /* SM_FEATURE_STATISTICS */
+
+/* =============================================================================
+ * CONFIGURATION STRUCT
  * ===========================================================================*/
 
 /**
- * @brief Debug message types
- */
-typedef enum {
-    DEBUG_MSG_INIT = 0,      /**< Initialization messages */
-    DEBUG_MSG_RUNTIME,       /**< Runtime operation messages */
-    DEBUG_MSG_PERIODIC,      /**< Periodic status messages */
-    DEBUG_MSG_ERROR,         /**< Error messages */
-    DEBUG_MSG_WARNING,       /**< Warning messages */
-    DEBUG_MSG_INFO,          /**< Informational messages */
-    DEBUG_MSG_MAX            /**< Number of message types (must be last) */
-} DebugMessageType_t;
-
-/**
- * @brief Communication interface types
- */
-typedef enum {
-    COMM_INTERFACE_UART = 0, /**< UART/Serial interface */
-    COMM_INTERFACE_SPI,      /**< SPI interface */
-    COMM_INTERFACE_I2C,      /**< I2C interface */
-    COMM_INTERFACE_USB,      /**< USB interface */
-    COMM_INTERFACE_RTT,      /**< SEGGER RTT interface */
-    COMM_INTERFACE_MAX       /**< Number of interfaces (must be last) */
-} CommInterface_t;
-
-/**
- * @brief Debug message structure
+ * @brief Configuration passed to SM_Init()
  *
- * FIXED: Uses DEBUG_MAX_MESSAGE_LENGTH constant instead of hardcoded 128
+ * Points to user-provided const arrays of state descriptors and transitions.
+ * These arrays live in flash (const).
  */
 typedef struct {
-    DebugMessageType_t type;                   /**< Message type */
-    char message[DEBUG_MAX_MESSAGE_LENGTH];    /**< Message text */
-    uint32_t timestamp;                        /**< Message timestamp */
-} DebugMessage_t;
+    const SM_StateDesc_t *states;        /**< Array of state descriptors [SM_STATE_COUNT] */
+    const SM_Transition_t *transitions;  /**< Array of transitions */
+    uint16_t transition_count;           /**< Number of entries in transitions array */
+    uint16_t initial_state;              /**< Starting state index (typically 0) */
+} SM_Config_t;
 
 /* =============================================================================
- * STATE MACHINE CORE TYPES
+ * STATE MACHINE CONTEXT (full definition)
+ *
+ * Defined here for static allocation. Users MUST NOT access fields directly --
+ * use the SM_* API exclusively.
  * ===========================================================================*/
 
-/**
- * @brief State transition definition
- */
-typedef struct {
-    StateMachineEvent_t event;   /**< Event that triggers transition */
-    StateMachineState_t next_state; /**< Target state */
-} StateTransition_t;
+struct SM_Context {
+    /* --- Current state --- */
+    volatile uint16_t current_state;   /**< Current state index (volatile for ISR-safe reads) */
+    uint16_t previous_state;           /**< Previous state index */
 
-/**
- * @brief State configuration
- *
- * FIXED: Uses SM_MAX_TRANSITIONS_PER_STATE constant instead of hardcoded 5
- */
-typedef struct {
-    StateMachineState_t state_id;                              /**< State identifier */
-    void (*on_entry)(void);                                     /**< Entry callback */
-    void (*on_state)(void);                                     /**< State callback */
-    void (*on_exit)(void);                                      /**< Exit callback */
-    StateTransition_t transitions[SM_MAX_TRANSITIONS_PER_STATE]; /**< Transition table */
-    uint8_t transition_count;                                   /**< Number of transitions */
-    uint32_t timeout_ms;                                        /**< State timeout */
-} StateConfig_t;
+    /* --- State history ring --- */
+    uint16_t state_history[SM_STATE_HISTORY_DEPTH]; /**< Recent state transitions */
+    uint8_t history_head;              /**< Next write position in history ring */
 
-/**
- * @brief Error handler context
- *
- * FIXED: Uses ERROR_HISTORY_SIZE constant instead of hardcoded 16
- */
-typedef struct {
-    ErrorInfo_t current_error;                 /**< Current active error */
-    ErrorInfo_t error_history[ERROR_HISTORY_SIZE]; /**< Error history buffer */
-    uint8_t history_index;                     /**< Circular buffer index */
-    uint32_t minor_error_timestamp;            /**< Minor error tracking */
-    uint8_t minor_good_message_count;          /**< Good message counter */
-    bool critical_lock_active;                 /**< Critical error lock flag */
-} ErrorHandler_t;
+    /* --- Timing --- */
+    uint32_t state_entry_time;         /**< Timestamp of last state entry (ms) */
+    uint32_t state_exec_count;         /**< Executions since entering current state */
+    bool state_entered;                /**< True on first cycle after transition */
+    bool timeout_fired;                /**< Prevents repeated timeout events per state entry */
 
-/**
- * @brief State machine context
- *
- * FIXED: Added volatile qualifier for ISR-accessed field
- * Contains all runtime state for the state machine.
- */
-typedef struct {
-    StateMachineState_t current_state;     /**< Current active state */
-    StateMachineState_t previous_state;    /**< Previous state */
-    volatile StateMachineEvent_t pending_event; /**< Pending event (ISR-safe) */
-    uint32_t state_entry_time;             /**< Time when state was entered */
-    uint32_t state_execution_count;        /**< Number of times state executed */
-    bool state_changed;                    /**< State change flag */
-    ErrorHandler_t error_handler;          /**< Error handler context */
-} StateMachineContext_t;
+    /* --- Event queue --- */
+    SM_EventQueue_t event_queue;       /**< ISR-safe event ring buffer */
 
-/**
- * @brief Debug system configuration
- */
-typedef struct {
-    CommInterface_t interface;         /**< Active communication interface */
-    bool enable_init_messages;         /**< Enable init messages */
-    bool enable_runtime_messages;      /**< Enable runtime messages */
-    bool enable_periodic_messages;     /**< Enable periodic messages */
-    uint32_t periodic_last_time;       /**< Last periodic message time */
-} DebugConfig_t;
+    /* --- Error handler --- */
+    SM_ErrorHandler_t error;           /**< Error handling state */
 
-/* =============================================================================
- * COMPILE-TIME VALIDATION
- * ===========================================================================*/
+    /* --- Configuration (const pointer to user's config) --- */
+    const SM_Config_t *config;         /**< Pointer to user-provided config */
 
-/* Ensure STATE_MAX doesn't exceed configured maximum */
-_Static_assert(STATE_MAX <= SM_MAX_STATES,
-    "STATE_MAX exceeds SM_MAX_STATES - increase SM_MAX_STATES in configuration");
+    /* --- Callbacks --- */
+    SM_RecoveryCallback_t recovery_cb; /**< Optional recovery callback */
+    SM_ErrorCallback_t error_cb;       /**< Optional error notification callback */
 
-/* Ensure EVENT_MAX fits in reasonable size */
-_Static_assert(EVENT_MAX < 256,
-    "EVENT_MAX exceeds 255 - consider using uint16_t for event type");
+    /* --- Runtime transitions (optional) --- */
+#if SM_FEATURE_RUNTIME_TRANSITIONS
+    SM_Transition_t rt_transitions[SM_MAX_TRANSITIONS]; /**< Runtime transition table */
+    uint16_t rt_transition_count;      /**< Number of runtime transitions */
+#endif
 
-/* Ensure error history size is reasonable */
-_Static_assert(ERROR_HISTORY_SIZE > 0 && ERROR_HISTORY_SIZE <= 255,
-    "ERROR_HISTORY_SIZE must be between 1 and 255");
+    /* --- Statistics (optional) --- */
+#if SM_FEATURE_STATISTICS
+    SM_Stats_t stats;                  /**< Runtime statistics */
+#endif
+
+    /* --- Initialized flag --- */
+    bool initialized;                  /**< True after successful SM_Init() */
+};
 
 #ifdef __cplusplus
 }

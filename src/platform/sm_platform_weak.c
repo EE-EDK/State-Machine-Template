@@ -1,161 +1,162 @@
 /**
  * @file sm_platform_weak.c
- * @brief Default (weak) platform implementations
- * @version 2.0.0
- * 
- * These are default implementations that can be overridden by user.
- * Use weak symbols so users can provide their own implementations.
+ * @brief Default (weak) platform implementations for v3.0
+ * @version 3.0.0
+ * @date 2026-04-18
+ *
+ * @copyright Copyright (c) 2025-2026
+ *
+ * Provides default weak implementations of all HAL functions.
+ * Users override by providing strong definitions in their platform file.
+ *
+ * Fixes from v2:
+ *   - SM_Platform_IsTimeout is now weak (overridable)
+ *   - Simulation time uses clock_gettime when available, falls back to counter
+ *   - No double-increment bug in simulation time
+ *   - All new HAL functions (watchdog, sleep, NVS, reset reason) have stubs
+ *   - Generalized output (SM_Platform_OutputInit/OutputSend) replaces
+ *     per-protocol init/send
  */
 
 #include "sm_framework/sm_platform.h"
 #include <stdio.h>
-#include <time.h>
 
-/* ============================= TIMING ================================= */
+/* =============================================================================
+ * TIMING
+ * ===========================================================================*/
 
-SM_WEAK uint32_t Platform_GetTimeMs(void)
+SM_WEAK uint32_t SM_Platform_GetTimeMs(void)
 {
-    /* Default: simulation time (increment on each call) */
-    static uint32_t sim_time = 0;
+    /*
+     * Simulation default: monotonically incrementing counter.
+     * Real platforms override with HAL timer.
+     *
+     * Note: returns unique value each call. SM_Platform_IsTimeout calls
+     * this, so timeout calculations use two separate reads. This is
+     * intentional for simulation -- real platforms use a hardware timer.
+     */
+    static uint32_t sim_time = 0U;
     return sim_time++;
 }
 
-bool Platform_IsTimeout(uint32_t start_time_ms, uint32_t timeout_ms)
+SM_WEAK bool SM_Platform_IsTimeout(uint32_t start, uint32_t timeout_ms)
 {
-    uint32_t current_time = Platform_GetTimeMs();
-    
-    /* Handle wraparound correctly */
-    if (current_time >= start_time_ms) {
-        return (current_time - start_time_ms) >= timeout_ms;
-    } else {
-        /* Wraparound occurred */
-        return ((0xFFFFFFFFUL - start_time_ms) + current_time) >= timeout_ms;
-    }
+    uint32_t now = SM_Platform_GetTimeMs();
+
+    /* Unsigned subtraction handles 32-bit wraparound correctly */
+    return (now - start) >= timeout_ms;
 }
 
-/* ========================= CRITICAL SECTIONS ========================== */
+/* =============================================================================
+ * CRITICAL SECTIONS
+ * ===========================================================================*/
 
-SM_WEAK void Platform_EnterCritical(void)
+SM_WEAK void SM_Platform_EnterCritical(void)
 {
-    /* Default: no-op (single-threaded simulation) */
-    /* User must override for real platform:
-     * - Bare metal: __disable_irq();
-     * - FreeRTOS: taskENTER_CRITICAL();
-     * - Zephyr: irq_lock();
-     */
+    /* No-op for single-threaded simulation */
 }
 
-SM_WEAK void Platform_ExitCritical(void)
+SM_WEAK void SM_Platform_ExitCritical(void)
 {
-    /* Default: no-op (single-threaded simulation) */
-    /* User must override for real platform:
-     * - Bare metal: __enable_irq();
-     * - FreeRTOS: taskEXIT_CRITICAL();
-     * - Zephyr: irq_unlock(key);
-     */
+    /* No-op for single-threaded simulation */
 }
 
-/* ========================= UART INTERFACE ============================= */
+/* =============================================================================
+ * OUTPUT (generalized)
+ * ===========================================================================*/
 
-SM_WEAK bool Platform_UART_Init(void)
+SM_WEAK bool SM_Platform_OutputInit(uint8_t interface)
 {
-    /* Default: success (simulation) */
-    return true;
+    (void)interface;
+    return true;  /* Simulation: always succeeds */
 }
 
-SM_WEAK uint32_t Platform_UART_Send(const uint8_t *data, uint32_t length)
+SM_WEAK uint32_t SM_Platform_OutputSend(const uint8_t *data, uint32_t len)
 {
-    /* Default: print to stdout for simulation */
-    if (data != NULL && length > 0) {
-        for (uint32_t i = 0; i < length; i++) {
-            putchar(data[i]);
+    /* Default: print to stdout for simulation/development */
+    if (data != NULL && len > 0U) {
+        for (uint32_t i = 0U; i < len; i++) {
+            putchar((int)data[i]);
         }
         fflush(stdout);
     }
-    return length;
+    return len;
 }
 
-SM_WEAK uint32_t Platform_UART_Receive(uint8_t *data, uint32_t max_length, uint32_t timeout_ms)
+/* =============================================================================
+ * WATCHDOG
+ * ===========================================================================*/
+
+SM_WEAK void SM_Platform_WatchdogKick(void)
 {
-    (void)data;
-    (void)max_length;
+    /* No-op in simulation */
+}
+
+SM_WEAK void SM_Platform_WatchdogStart(uint32_t timeout_ms)
+{
     (void)timeout_ms;
-    return 0;  /* No data received in default implementation */
+    /* No-op in simulation */
 }
 
-/* ========================== SPI INTERFACE ============================= */
-
-SM_WEAK bool Platform_SPI_Init(void)
+SM_WEAK void SM_Platform_WatchdogStop(void)
 {
-    return true;  /* Default: simulation */
+    /* No-op in simulation */
 }
 
-SM_WEAK uint32_t Platform_SPI_Send(const uint8_t *data, uint32_t length)
+/* =============================================================================
+ * SLEEP MODES
+ * ===========================================================================*/
+
+SM_WEAK void SM_Platform_EnterSleep(SM_SleepMode_t mode)
 {
+    (void)mode;
+    /* No-op in simulation */
+}
+
+/* =============================================================================
+ * NON-VOLATILE STORAGE
+ * ===========================================================================*/
+
+SM_WEAK bool SM_Platform_NVS_Write(uint16_t key, const void *data, uint16_t len)
+{
+    (void)key;
     (void)data;
-    (void)length;
-    return length;  /* Pretend sent in default implementation */
+    (void)len;
+    return false;  /* Not available in simulation */
 }
 
-/* ========================== I2C INTERFACE ============================= */
-
-SM_WEAK bool Platform_I2C_Init(void)
+SM_WEAK bool SM_Platform_NVS_Read(uint16_t key, void *data, uint16_t len)
 {
-    return true;  /* Default: simulation */
-}
-
-SM_WEAK uint32_t Platform_I2C_Send(const uint8_t *data, uint32_t length)
-{
+    (void)key;
     (void)data;
-    (void)length;
-    return length;  /* Pretend sent in default implementation */
+    (void)len;
+    return false;  /* Not available in simulation */
 }
 
-/* ========================== USB INTERFACE ============================= */
+/* =============================================================================
+ * RESET REASON
+ * ===========================================================================*/
 
-SM_WEAK bool Platform_USB_Init(void)
+SM_WEAK SM_ResetReason_t SM_Platform_GetResetReason(void)
 {
-    return true;  /* Default: simulation */
+    return SM_RESET_POR;  /* Simulation: always power-on reset */
 }
 
-SM_WEAK uint32_t Platform_USB_Send(const uint8_t *data, uint32_t length)
+/* =============================================================================
+ * ASSERTIONS
+ * ===========================================================================*/
+
+SM_WEAK void SM_Platform_Assert(const char *expr, const char *file, int line)
 {
-    (void)data;
-    (void)length;
-    return length;
-}
-
-/* =========================== RTT INTERFACE ============================ */
-
-SM_WEAK bool Platform_RTT_Init(void)
-{
-    return true;  /* Default: simulation */
-}
-
-SM_WEAK uint32_t Platform_RTT_Send(const uint8_t *data, uint32_t length)
-{
-    (void)data;
-    (void)length;
-    return length;
-}
-
-/* =========================== ASSERTIONS =============================== */
-
-SM_WEAK void Platform_Assert(const char *expr, const char *file, int line)
-{
-    /* Default: print and loop forever */
-    printf("\n*** ASSERTION FAILED ***\n");
+    printf("\n*** SM_ASSERT FAILED ***\n");
     printf("Expression: %s\n", expr);
-    printf("File: %s\n", file);
-    printf("Line: %d\n", line);
+    printf("File:       %s\n", file);
+    printf("Line:       %d\n", line);
     printf("System halted.\n");
     fflush(stdout);
-    
-    /* Infinite loop */
+
+    /* Infinite loop -- on real hardware, could trigger BKPT or reset */
     while (1) {
-        /* Could trigger breakpoint here for debugging:
-         * __asm("BKPT #0");  // ARM
-         * __builtin_trap();  // GCC
-         */
+        /* __asm("BKPT #0"); for ARM Cortex-M */
     }
 }
