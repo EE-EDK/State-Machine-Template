@@ -35,7 +35,7 @@ Rewrite the embedded C state machine framework from a basic template into a prod
 - [x] **Phase 3: Error Handler Rewrite** (DIS, SM_REQUIRE, stats) -- completed 2026-04-19
 - [x] **Phase 4: HAL Expansion** (watchdog, power, NVS, critical section nesting) -- completed 2026-04-18, commit 6b7fac6
 - [x] **Phase 5: Debug System Rewrite** (per-module filtering, compile-time stripping) -- completed 2026-04-18, commit 4eb4e03
-- [ ] **Phase 6: Test Infrastructure** (Unity framework, host-side tests, CI)
+- [x] **Phase 6: Test Infrastructure** (9 suites, 102 tests, ctest) -- completed 2026-04-19
 - [ ] **Phase 7: Examples & Documentation** (real-world examples, migration guide)
 - [ ] **Phase 8: Validation & Release** (static analysis, size audit, final review)
 
@@ -299,20 +299,20 @@ Rewrite the embedded C state machine framework from a basic template into a prod
 **Goal:** Create comprehensive unit test suite using Unity framework, runnable on host. Cover all QP/C-inspired features.
 
 ### Tasks
-- [ ] 6.1 Add Unity test framework (single-header, MIT license) to `test/unity/`
-- [ ] 6.2 Create `test/CMakeLists.txt` with test targets
-- [ ] 6.3 **Event queue tests**: post, get, full, empty, overflow, frontEvt bypass, frontEvt-to-ring overflow, watermark tracking, flush
-- [ ] 6.4 **Core engine tests**: init, DIS verification, transition, guard block, guard pass, multiple guards on same event, timeout fire-once, dwell time, state history ring
-- [ ] 6.5 **Time event tests**: arm one-shot, arm periodic, disarm while armed, tick decrement, event posting on expiry, auto-reload, max time events bound, ISR arm/disarm safety
-- [ ] 6.6 **Deferred event tests**: defer, recall (LIFO to front), flush, defer queue full, recall when empty
-- [ ] 6.7 **Error handler tests**: all 3 tiers, escalation, recovery callback, history tracking, history count accuracy, DIS on critical_lock, bounds checking
-- [ ] 6.8 **Debug system tests**: enable/disable per-level, SM_DEBUG_LEVEL compile gate, format output, buffer overflow, HexDump
-- [ ] 6.9 **Safety tests**: DIS corruption detection (inject bad `state_dis`, verify assertion fires), bounded loop assertion (inject excessive transition count), numeric assertion ID output format
-- [ ] 6.10 **HAL tests**: nested critical sections, timeout wraparound at UINT32_MAX, IsTimeout override
-- [ ] 6.11 **Integration tests**: full multi-state cycle with time events, deferred events, error injection, recovery
-- [ ] 6.12 Add `ctest` integration so `cmake --build . && ctest` runs all tests
-- [ ] 6.13 Add code coverage target (`gcov`/`lcov`) with 90% branch coverage gate
-- [ ] 6.14 Create GitHub Actions CI: build matrix (GCC x86, Clang), test, coverage, size report
+- [x] 6.1 Unity v2.6.0 via FetchContent (URL download, no vendored files)
+- [x] 6.2 tests/CMakeLists.txt with sm_framework_test lib (all features enabled) + add_sm_test helper
+- [x] 6.3 test_event_queue.c — 10 tests: frontEvt bypass, ring overflow, watermark, FIFO delivery order
+- [x] 6.4 test_engine.c — 21 tests: init validation, on_entry/execute/exit, guards (single + multi-fallthrough), timeout fire-once, dwell time, state history, reset
+- [x] 6.5 test_time_events.c — 11 tests: init fields, arm one-shot/periodic, disarm, tick countdown, multi-timer, re-arm, sig+data verification
+- [x] 6.6 test_deferred.c — 9 tests: defer/recall FIFO from defer queue, LIFO to main front, flush, capacity=4
+- [x] 6.7 test_error.c — 18 tests: 3-tier report, DIS corruption on critical_lock (assertion 710), history ring wrap, recovery callback + max retries, notify callback, SM_Error_GetStats
+- [x] 6.8 test_debug.c — 14 tests: level enable/disable, tag registration (16 max), periodic interval, HexDump null/zero safety
+- [x] 6.9 test_safety.c — 11 tests: DIS update/verify, state_dis/init_dis/critical_lock_dis corruption, SM_REQUIRE module+id, bounded loop exhaust
+- [x] 6.10 test_hal.c — 18 tests: SimTick, IsTimeout + uint32 wraparound, critsec nesting 3-deep, capabilities, NVS/reset stubs
+- [x] 6.11 test_integration.c — 6 tests: full lifecycle, time event + transition, error injection + recovery, deferred across states, guard multipath, statistics
+- [x] 6.12 ctest integration — `cmake --build . && ctest` runs all 9 suites, 102 tests, 0.35s
+- [ ] 6.13 Code coverage target (gcov/lcov) — deferred to Phase 8
+- [ ] 6.14 GitHub Actions CI — deferred to Phase 8
 
 ### Exit Criteria
 - `ctest` passes all tests

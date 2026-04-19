@@ -33,6 +33,19 @@ state-machine-template/
 │   ├── task_plan.md        # Master 9-phase rewrite plan with decisions D1-D11
 │   ├── findings.md         # Bug inventory, architecture gaps, QP/C review
 │   └── progress.md         # Session log
+├── tests/
+│   ├── CMakeLists.txt          # Test build system (Unity FetchContent, sm_framework_test lib)
+│   ├── test_common.h           # Shared test enums, assert-capture macros
+│   ├── test_platform.c         # Test platform (longjmp assert, resettable sim time)
+│   ├── test_event_queue.c      # 10 tests: frontEvt, ring, watermark, delivery order
+│   ├── test_engine.c           # 21 tests: init, process, guards, timeout, dwell, history
+│   ├── test_time_events.c      # 11 tests: arm, disarm, one-shot, periodic, multi-timer
+│   ├── test_deferred.c         # 9 tests: defer, recall LIFO-to-front, flush, capacity
+│   ├── test_error.c            # 18 tests: 3-tier errors, DIS, stats, recovery
+│   ├── test_debug.c            # 14 tests: levels, tags, periodic, hexdump
+│   ├── test_safety.c           # 11 tests: DIS corruption, bounded loops, SM_REQUIRE
+│   ├── test_hal.c              # 18 tests: critsec nesting, timeout wrap, capabilities
+│   └── test_integration.c      # 6 tests: full lifecycle, cross-subsystem scenarios
 ├── CMakeLists.txt          # Build system (cmake 3.15+, C99)
 ├── Quick-Guide.md
 └── README.md
@@ -43,8 +56,8 @@ state-machine-template/
 # Standard build
 rm -rf build && mkdir build && cd build && cmake .. -DBUILD_EXAMPLES=ON && cmake --build .
 
-# With options
-cmake .. -DSM_PLATFORM=SIMULATION -DBUILD_EXAMPLES=ON -DCMAKE_BUILD_TYPE=Debug
+# With tests
+cmake .. -DBUILD_TESTS=ON -DBUILD_EXAMPLES=ON -DCMAKE_BUILD_TYPE=Debug && cmake --build . && ctest
 
 # Run examples
 ./examples/basic_example
@@ -91,7 +104,7 @@ See `docs_dev/task_plan.md` for full rationale. Key: D6 frontEvt, D7 DIS, D8 bou
 
 ## TODO
 - [x] **Phase 3: Error Handler Rewrite** — DIS on critical_lock, SM_REQUIRE assertions (700-799), SM_Error_GetStats, SM_DEFINE_MODULE("sm_error"), error stats tracking
-- [ ] **Phase 6: Test Infrastructure** — Unity framework, event queue tests (frontEvt, watermark), DIS corruption detection, time event arm/disarm/tick, deferred event LIFO recall, guard conditions, HSM parent fallback, nested critsec, 90%+ branch coverage, ctest + gcov/lcov, GitHub Actions CI
+- [x] **Phase 6: Test Infrastructure** — Unity v2.6.0 via FetchContent, 9 test suites (102 tests), ctest integration, test platform with longjmp assert capture
 - [ ] **Phase 7: Examples & Documentation** — blinky w/ timer events, sensor pipeline w/ guards, error recovery demo, multi-FSM, STM32 platform stub, README rewrite, Quick-Guide rewrite, MIGRATION.md (v2→v3)
 - [ ] **Phase 8: Validation & Release** — cppcheck, clang-tidy, arm-none-eabi-size audit (RAM < 2KB, Flash < 10KB), zero heap verification (nm), MISRA C:2012 checklist, _Static_assert validation, tag v3.0.0
 - [x] Phase 0: Cleanup — legacy files removed (commit ed92613)

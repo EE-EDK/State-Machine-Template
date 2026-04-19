@@ -13,6 +13,7 @@
 #include "sm_framework/sm_platform.h"
 #include "test_common.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <setjmp.h>
 
 /* =============================================================================
