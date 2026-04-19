@@ -100,6 +100,10 @@ See `docs_dev/task_plan.md` for full rationale. Key: D6 frontEvt, D7 DIS, D8 bou
 - [x] Phase 4: HAL Expansion — nested critsec, SimTick, platform detection, capabilities (commit 6b7fac6)
 - [x] Phase 5: Debug Rewrite — runtime levels, 16 module tags, periodic interval, ASCII hexdump (commit 4eb4e03)
 
+## Session Continuity
+
+**Last session:** `e3e00e41` (full: see `.claude/projects/` for transcript JSONL)
+
 ## Conversation History Archive
 
 Past AI conversations (217 total) are archived at the workspace root: `.claude/conversation-history/`. Search `index.json` by keyword or browse `index.md` for topic-grouped context on prior decisions, approaches, and project history.
