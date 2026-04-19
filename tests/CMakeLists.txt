@@ -83,5 +83,5 @@ add_sm_test(test_event_queue  test_event_queue.c)
 # add_sm_test(test_error        test_error.c)        # Phase 6 TODO
 # add_sm_test(test_debug        test_debug.c)        # Phase 6 TODO
 # add_sm_test(test_safety       test_safety.c)       # Phase 6 TODO
-# add_sm_test(test_hal          test_hal.c)           # Phase 6 TODO
+add_sm_test(test_hal          test_hal.c)
 # add_sm_test(test_integration  test_integration.c)  # Phase 6 TODO
