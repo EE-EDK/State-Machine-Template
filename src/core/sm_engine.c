@@ -747,7 +747,7 @@ bool SM_AddTransition(SM_Handle_t sm, const SM_Transition_t *transition)
 
     if (transition->from_state >= SM_STATE_COUNT ||
         transition->to_state >= SM_STATE_COUNT ||
-        transition->event > SM_EVENT_COUNT) {
+        transition->event >= SM_EVENT_COUNT) {
         SM_LOG_WARN("SM_AddTransition: invalid from/to/event");
         return false;
     }
