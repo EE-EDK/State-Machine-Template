@@ -88,11 +88,13 @@ bool SM_Error_Report(SM_Handle_t sm, SM_ErrorLevel_t level, uint16_t code)
             break;
 
         case SM_ERROR_NORMAL:
+            sm->error.minor_active = false;
             SM_LOG_WARN("SM_Error: NORMAL code=%u state=%u",
                         (unsigned)code, (unsigned)info.state);
             break;
 
         case SM_ERROR_CRITICAL:
+            sm->error.minor_active = false;
             sm->error.critical_lock = true;
             SM_DIS_UPDATE(sm->error.critical_lock ? 1U : 0U,
                           sm->error.critical_lock_dis, uint8_t);
@@ -120,6 +122,8 @@ void SM_Error_Clear(SM_Handle_t sm)
 
     sm->error.current.level = SM_ERROR_NONE;
     sm->error.current.code = 0U;
+    sm->error.current.state = 0U;
+    sm->error.current.timestamp = 0U;
     sm->error.current.retry_count = 0U;
     sm->error.current.recovered = false;
     sm->error.minor_active = false;
@@ -191,6 +195,10 @@ uint8_t SM_Error_GetHistoryCount(SM_Handle_t sm)
 bool SM_Error_AttemptRecovery(SM_Handle_t sm)
 {
     if (sm == NULL || !sm->initialized) {
+        return false;
+    }
+
+    if (sm->error.critical_lock) {
         return false;
     }
 

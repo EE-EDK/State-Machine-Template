@@ -53,6 +53,10 @@ bool SM_Init(SM_Handle_t sm, const SM_Config_t *config);
  * @warning Do not call recursively from inside state callbacks, guards,
  *          transition actions, or hooks invoked by this function — re-entering
  *          SM_Process on the same SM_Handle_t corrupts runtime state.
+ *
+ * @note If a matching transition has \a to_state >= SM_STATE_COUNT, the event
+ *       is consumed and the machine stays in the current state (runtime warn
+ *       when debug is enabled).
  */
 void SM_Process(SM_Handle_t sm);
 

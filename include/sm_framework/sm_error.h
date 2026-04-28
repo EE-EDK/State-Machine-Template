@@ -54,11 +54,12 @@ bool SM_Error_Report(SM_Handle_t sm, SM_ErrorLevel_t level, uint16_t code);
 /**
  * @brief Clear the current error
  *
- * Resets current error to SM_ERROR_NONE.
+ * Resets current error to SM_ERROR_NONE and clears stored state index and
+ * timestamp on the current record.
  * Does NOT clear critical lock -- that requires SM_Reset() or hardware reset.
  *
- * @note An error timestamp of 0 ms is valid at boot; do not treat it as a
- *       special sentinel unless your platform guarantees time never starts at 0.
+ * @note An error timestamp of 0 ms is valid at boot; after Clear, 0 means “no
+ *       timestamp recorded,” not necessarily boot time.
  *
  * @param sm Handle to the state machine instance
  */
@@ -118,6 +119,8 @@ uint8_t SM_Error_GetHistoryCount(SM_Handle_t sm);
  *
  * @param sm Handle to the state machine instance
  * @return true if recovery succeeded, false if failed or max retries exceeded
+ *
+ * @note Returns false immediately while critical_lock is active (CRITICAL path).
  */
 bool SM_Error_AttemptRecovery(SM_Handle_t sm);
 

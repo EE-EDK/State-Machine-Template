@@ -454,7 +454,6 @@ void SM_Process(SM_Handle_t sm)
                 uint16_t old_state = sm->current_state;
                 uint16_t new_state = trans->to_state;
 
-                SM_REQUIRE(203, new_state < SM_STATE_COUNT);
                 if (new_state >= SM_STATE_COUNT) {
                     SM_LOG_WARN("SM_Process: drop transition (invalid to_state=%u)",
                                 (unsigned)new_state);
@@ -510,6 +509,10 @@ void SM_Process(SM_Handle_t sm)
 void SM_Reset(SM_Handle_t sm)
 {
     if (sm == NULL || !sm->initialized) {
+        return;
+    }
+
+    if (sm->config == NULL) {
         return;
     }
 
@@ -742,6 +745,13 @@ bool SM_AddTransition(SM_Handle_t sm, const SM_Transition_t *transition)
         return false;
     }
 
+    if (transition->from_state >= SM_STATE_COUNT ||
+        transition->to_state >= SM_STATE_COUNT ||
+        transition->event > SM_EVENT_COUNT) {
+        SM_LOG_WARN("SM_AddTransition: invalid from/to/event");
+        return false;
+    }
+
     if (sm->rt_transition_count >= SM_MAX_TRANSITIONS) {
         SM_LOG_WARN("SM_AddTransition: runtime table full (%u/%u)",
                     (unsigned)sm->rt_transition_count,
@@ -896,37 +906,45 @@ void SM_TimeEvt_Tick_(SM_Handle_t sm)
         return;
     }
 
-    SM_TimeEvt_t *te = sm->time_evt_head;
-    uint16_t tick_count = 0U;
+    /*
+     * Same critical-section discipline as SM_TimeEvt_Arm / Disarm so list and
+     * ctr fields cannot race ISR-side arm/disarm while the tick runs.
+     */
+    SM_Platform_EnterCritical();
+    {
+        SM_TimeEvt_t *te = sm->time_evt_head;
+        uint16_t tick_count = 0U;
 
-    while (te != NULL && tick_count < SM_FEATURE_MAX_TIME_EVENTS) {
-        SM_INVARIANT(330, tick_count < SM_FEATURE_MAX_TIME_EVENTS);
+        while (te != NULL && tick_count < SM_FEATURE_MAX_TIME_EVENTS) {
+            SM_INVARIANT(330, tick_count < SM_FEATURE_MAX_TIME_EVENTS);
 
-        SM_TimeEvt_t *next = te->next;  /* cache next before potential removal */
+            SM_TimeEvt_t *next = te->next;  /* cache next before potential removal */
 
-        if (te->ctr > 0U) {
-            te->ctr--;
+            if (te->ctr > 0U) {
+                te->ctr--;
 
-            /* Matches sm_types.h: countdown posts when ctr hits 0 after tick */
-            if (te->ctr == 0U) {
-                /* Post the event */
-                (void)sm_post_internal(sm, te->sig, te->data);
+                /* Matches sm_types.h: countdown posts when ctr hits 0 after tick */
+                if (te->ctr == 0U) {
+                    /* Post the event (nested critical sections are ok) */
+                    (void)sm_post_internal(sm, te->sig, te->data);
 
-                SM_LOG_VERBOSE("TimeEvt: sig=%u fired", (unsigned)te->sig);
+                    SM_LOG_VERBOSE("TimeEvt: sig=%u fired", (unsigned)te->sig);
 
-                if (te->interval > 0U) {
-                    /* Periodic: reload */
-                    te->ctr = te->interval;
-                } else {
-                    /* One-shot: leave disarmed (ctr == 0) but keep in list
-                     * so user can re-arm without re-inserting. */
+                    if (te->interval > 0U) {
+                        /* Periodic: reload */
+                        te->ctr = te->interval;
+                    } else {
+                        /* One-shot: leave disarmed (ctr == 0) but keep in list
+                         * so user can re-arm without re-inserting. */
+                    }
                 }
             }
-        }
 
-        te = next;
-        tick_count++;
+            te = next;
+            tick_count++;
+        }
     }
+    SM_Platform_ExitCritical();
 }
 
 #endif /* SM_FEATURE_TIME_EVENTS */

@@ -234,8 +234,9 @@
 /**
  * @brief Maximum HSM nesting depth
  *
- * Only used when SM_FEATURE_HSM == 1. Bounds the parent-chain traversal
- * during LCA computation and entry/exit sequences.
+ * Only used when SM_FEATURE_HSM == 1. Bounds parent-chain traversal when
+ * resolving transitions (parent fallback); full LCA entry/exit chains are not
+ * implemented — see `sm_find_transition_hsm` in sm_engine.c.
  */
 #ifndef SM_HSM_MAX_DEPTH
 #define SM_HSM_MAX_DEPTH             (6U)

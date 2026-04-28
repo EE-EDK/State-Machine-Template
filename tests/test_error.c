@@ -258,6 +258,8 @@ void test_clear_resets_current_but_not_critical_lock(void)
     TEST_ASSERT_TRUE(ok);
     TEST_ASSERT_EQUAL_INT(SM_ERROR_NONE, current.level);
     TEST_ASSERT_EQUAL_UINT16(0U, current.code);
+    TEST_ASSERT_EQUAL_UINT16(0U, current.state);
+    TEST_ASSERT_EQUAL_UINT32(0U, current.timestamp);
 
     /* critical_lock must still be set -- Clear does not reset it */
     TEST_ASSERT_TRUE(SM_Error_IsCriticalLock(s_sm));
@@ -550,8 +552,6 @@ void test_notify_callback_invoked_on_every_report(void)
 
 void test_get_stats_returns_correct_counters(void)
 {
-    SM_Error_RegisterRecoveryCallback(s_sm, test_recovery_cb);
-
     /* Advance sim time so we can verify last_error_time */
     SM_Platform_SimTick();  /* t=1 */
     SM_Platform_SimTick();  /* t=2 */
@@ -566,9 +566,7 @@ void test_get_stats_returns_correct_counters(void)
     SM_Platform_SimTick();  /* t=5 */
     SM_Error_Report(s_sm, SM_ERROR_CRITICAL, 0x0003U);
 
-    /* Attempt recovery (will fail -- current is CRITICAL, callback returns false) */
-    s_recovery_return_value = false;
-    SM_Error_AttemptRecovery(s_sm);
+    /* AttemptRecovery is a no-op while critical_lock is active (no callback run). */
 
     SM_ErrorStats_t stats;
     bool ok = SM_Error_GetStats(s_sm, &stats);
@@ -582,7 +580,7 @@ void test_get_stats_returns_correct_counters(void)
 
     /* Recovery metrics */
     TEST_ASSERT_EQUAL_UINT32(0U, stats.recovery_success);
-    TEST_ASSERT_EQUAL_UINT32(1U, stats.recovery_fail);
+    TEST_ASSERT_EQUAL_UINT32(0U, stats.recovery_fail);
 
     /* last_error_time should be 5 (time of the CRITICAL report) */
     TEST_ASSERT_EQUAL_UINT32(5U, stats.last_error_time);

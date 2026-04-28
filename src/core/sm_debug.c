@@ -229,6 +229,7 @@ void SM_Debug_Print(uint8_t level, const char *fmt, ...)
 
     /* Clamp to buffer size (vsnprintf returns what it *would* have written) */
     if (msg_len < 0) {
+        msg_buf[0] = '\0';
         msg_len = 0;
     }
     if ((size_t)msg_len >= sizeof(msg_buf)) {
@@ -283,6 +284,7 @@ void SM_Debug_PrintTagged(int8_t tag_id, uint8_t level, const char *fmt, ...)
 
     /* Clamp to buffer size */
     if (msg_len < 0) {
+        msg_buf[0] = '\0';
         msg_len = 0;
     }
     if ((size_t)msg_len >= sizeof(msg_buf)) {
@@ -339,7 +341,9 @@ void SM_Debug_HexDump(const void *data, uint32_t len)
     for (uint32_t offset = 0U; offset < len; offset += 16U) {
         int pos = snprintf(line_buf, sizeof(line_buf), "%04lX: ", (unsigned long)offset);
         if (pos < 0) {
-            return;
+            /* Fallback prefix so remainder of row still produces safe output */
+            (void)memcpy(line_buf, "???? ", 5u);
+            pos = 5;
         }
 
         /* Number of bytes in this row */
