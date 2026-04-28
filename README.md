@@ -191,6 +191,14 @@ void SM_EventQueueFlush(SM_Handle_t sm);
 uint8_t SM_EventQueueGetMin(SM_Handle_t sm);  /* High-water mark for queue sizing */
 ```
 
+**Integration notes**
+
+- Prefer **`SM_PostEvent`’s return value** over “check `SM_EventQueueIsFull` then post” — another context (e.g. ISR) can fill the queue between the check and the post (TOCTOU).
+- **User events** (`event < SM_EVENT_COUNT`) use the front-slot fast path only when both the ring is empty and the front slot is free; otherwise ordering is FIFO among queued items. **Framework-internal posts** (state timeout, time events, deferred recall) use a separate internal path and may place an event in the front slot ahead of older ring traffic — see `sm_post_internal` in `sm_engine.c`.
+- **`SM_Process`** must run from task/main context only — not from ISR, and **not recursively** from entry/execute/exit, guards, or transition actions on the same handle.
+- **`SM_AddTransition`** (when enabled) is not synchronized with ISR posting; use only from init or the same runtime context as `SM_Process`.
+- **Invalid rows in the transition table** (e.g. `to_state >= SM_STATE_COUNT`) are ignored at runtime with a warning when debug is enabled; validate tables at boot if you need a hard fault.
+
 ### State Queries
 
 ```c
@@ -211,7 +219,7 @@ void SM_TimeEvt_Arm(SM_TimeEvt_t *te, uint32_t ticks, uint32_t interval);  /* in
 bool SM_TimeEvt_Disarm(SM_TimeEvt_t *te);
 ```
 
-Allocate `SM_TimeEvt_t` statically. `SM_TimeEvt_Arm` inserts into the instance's linked list; `SM_Process` ticks all armed events and posts their signals on expiry.
+Allocate `SM_TimeEvt_t` statically. `SM_TimeEvt_Arm` sets an initial **down-counter** in **ticks** (one decrement per `SM_TimeEvt_Tick_` call from `SM_Process`). The timer posts when the counter reaches **zero** after a tick. `interval` reloads the counter for periodic timers; `0` means one-shot until disarmed or re-armed.
 
 ### Deferred Events
 

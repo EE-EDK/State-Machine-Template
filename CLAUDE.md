@@ -109,8 +109,9 @@ See `docs_dev/task_plan.md` for full rationale. Key: D6 frontEvt, D7 DIS, D8 bou
 ## What NOT to Do
 - Do not block in state callbacks (no delay/infinite loops)
 - Do not modify SM_Context fields directly (use SM_* API exclusively)
-- Do not call SM_Process from ISR context (documented as non-ISR-safe)
+- Do not call SM_Process from ISR context (documented as non-ISR-safe); do not call SM_Process recursively from callbacks (corrupts the same instance)
 - Do not call SM_DeferEvent/SM_RecallEvent from ISR (state callback context only)
+- Treat SM_EventQueueIsFull/Depth/IsEmpty as diagnostic-only (TOCTOU with concurrent SM_PostEvent from ISR); use SM_PostEvent’s return value for decisions
 - Do not leave all debug messages enabled in production (use SM_DEBUG_LEVEL and SM_Debug_EnableLevel)
 
 ## TODO
@@ -133,6 +134,8 @@ All phases complete. Maintenance items only:
 ## Session Continuity
 
 **Last session:** `e3e00e41` (full: see `.claude/projects/` for transcript JSONL)
+
+**2026-04-27 — Deep review + documentation pass (commits `264a623+`):** Bounded-loop macro end condition (`var <= bound`); `SM_Process` returns if state descriptor missing, skips transition if `to_state` out of range (warn); headers document internal event priority vs user FIFO, queue query TOCTOU, `SM_AddTransition` context, global debug state, boot `timestamp==0` for errors; `docs_dev/findings.md` banner clarifies legacy audit vs v3; README/Quick-Guide integration notes added.
 
 ## Conversation History Archive
 

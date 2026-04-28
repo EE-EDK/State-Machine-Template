@@ -3,17 +3,18 @@
 Extends the root `ENGINEERING-PROJECTS/GEMINI.md`. This file defines project-specific mandates for the State Machine Framework template.
 
 ## 1. Project Identity
-- **Name:** State Machine Framework v2.0
+- **Name:** State Machine Framework v3.0
 - **Type:** Reusable embedded C library/template
 - **Language:** C99 (CMake build system, GCC toolchain)
-- **Status:** 100% complete — production-ready template
+- **Status:** Complete — production-ready template; maintenance doc/README parity with `CLAUDE.md`
 
 ## 2. Project-Specific Mandates
 
 ### Code Quality
 - **C99 strict:** No C++ features, no compiler extensions (`CMAKE_C_EXTENSIONS OFF`).
 - **No heap in core:** The framework core (`src/core/`) must never call `malloc`/`free`. All buffers are statically sized via config defines.
-- **Thread safety:** All shared state accessed from ISR context must use `Platform_EnterCritical()`/`Platform_ExitCritical()`. Event queue uses `volatile` qualifiers.
+- **ISR vs task:** `SM_PostEvent` is ISR-safe (critical sections). `SM_Process`, defer/recall, and runtime transition edits are **not** ISR-safe. Do not call `SM_Process` recursively from callbacks.
+- **Critical sections:** ISR-visible shared state uses `SM_Platform_EnterCritical()` / `SM_Platform_ExitCritical()` (must nest). Event queue indices use `volatile` where appropriate.
 - **Weak symbol pattern:** Platform implementations use `__attribute__((weak))` so users override only what they need.
 
 ### Configuration
@@ -33,12 +34,15 @@ Extends the root `ENGINEERING-PROJECTS/GEMINI.md`. This file defines project-spe
 | File | Purpose |
 |------|---------|
 | `include/sm_framework/sm_framework.h` | Public umbrella header |
-| `src/core/sm_state_machine.c` | Core state machine logic |
+| `src/core/sm_engine.c` | Core RTC engine (process, queue, time/defer, transitions) |
+| `src/core/sm_error.c` | Per-instance error handler |
+| `src/core/sm_debug.c` | Debug output (global subsystem when enabled) |
 | `src/platform/sm_platform_weak.c` | Default platform HAL |
 | `config/sm_config_template.h` | User configuration template |
 | `CMakeLists.txt` | Build configuration |
 | `README.md` | Full documentation and API reference |
-| `Quick-Guide.md` | Quick start guide |
+| `Quick-Guide.md` | Quick start + integration reminders |
+| `docs_dev/findings.md` | **Historical** pre-v3 audit — not current defect list |
 
 ## TODO
 - [ ] None identified

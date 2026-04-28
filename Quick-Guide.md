@@ -308,6 +308,16 @@ SM_Debug_HexDump(buffer, 32);
 
 ---
 
+## Safety and integration reminders
+
+- **`SM_BOUNDED_LOOP_BEGIN` / `SM_BOUNDED_LOOP_END`** — Bounded `for` loop; after the loop, the framework checks that the counter did not exceed the declared maximum (normal exhaustion `0..N-1` is valid).
+- **`SM_Process`** — Call from task/main loop only; **never** from ISR or **recursively** from state callbacks / guards / transition actions on the same `SM_Handle_t`.
+- **Posting events** — Use **`SM_PostEvent`’s `bool` return** to know if the enqueue succeeded; avoid “if not full then post” patterns across ISR and thread (race).
+- **Queue depth / full / empty** — Fine for diagnostics; not atomic with concurrent ISR posts (see README “Integration notes”).
+- **Debug (`SM_Debug_*`)** — Runtime level mask and tag table are **process-global**, not per state machine instance.
+
+---
+
 ## Platform Porting
 
 Override these `SM_Platform_*` weak-symbol functions for your target.
