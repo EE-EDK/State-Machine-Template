@@ -57,6 +57,9 @@ bool SM_Error_Report(SM_Handle_t sm, SM_ErrorLevel_t level, uint16_t code);
  * Resets current error to SM_ERROR_NONE.
  * Does NOT clear critical lock -- that requires SM_Reset() or hardware reset.
  *
+ * @note An error timestamp of 0 ms is valid at boot; do not treat it as a
+ *       special sentinel unless your platform guarantees time never starts at 0.
+ *
  * @param sm Handle to the state machine instance
  */
 void SM_Error_Clear(SM_Handle_t sm);

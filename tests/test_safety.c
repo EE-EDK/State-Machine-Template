@@ -239,22 +239,24 @@ void test_bounded_loop_within_bound_no_assert(void)
 }
 
 /* =============================================================================
- * TEST 11: SM_BOUNDED_LOOP — counter exhausts bound, fires SM_INVARIANT
+ * TEST 11: SM_BOUNDED_LOOP — counter exhausts bound without break (valid exit)
  * ===========================================================================*/
 
-void test_bounded_loop_exhausted_fires_invariant(void)
+void test_bounded_loop_exhausted_no_assert(void)
 {
-    TEST_EXPECT_ASSERT({
+    volatile uint32_t sum = 0U;
+
+    TEST_ASSERT_NO_ASSERT({
         SM_BOUNDED_LOOP_BEGIN(i, 5, 999)
         {
-            /* Never break -- let the counter exhaust the bound */
+            sum += i;
             (void)i;
         }
         SM_BOUNDED_LOOP_END(i, 5, 999)
     });
 
-    TEST_ASSERT_EQUAL_STRING("test_safety", test_assert_module);
-    TEST_ASSERT_EQUAL_INT(999, test_assert_id);
+    /* i ran 0..4 inclusive */
+    TEST_ASSERT_EQUAL_UINT32(0U + 1U + 2U + 3U + 4U, sum);
 }
 
 /* =============================================================================
@@ -286,7 +288,7 @@ int main(void)
 
     /* Bounded loops */
     RUN_TEST(test_bounded_loop_within_bound_no_assert);
-    RUN_TEST(test_bounded_loop_exhausted_fires_invariant);
+    RUN_TEST(test_bounded_loop_exhausted_no_assert);
 
     return UNITY_END();
 }

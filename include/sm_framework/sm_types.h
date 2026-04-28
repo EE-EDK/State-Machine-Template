@@ -182,8 +182,9 @@ typedef void (*SM_Action_t)(SM_Handle_t sm, uint16_t event, uint32_t data);
  *
  * Users allocate SM_TimeEvt_t statically and pass them to the API.
  *
- * QP/C convention: the event fires when ctr reaches 1 (not 0).  After firing,
- * ctr is reloaded from interval (0 = one-shot, disarmed after fire).
+ * Each SM_Process() tick decrements ctr when armed. The event posts when ctr
+ * becomes 0 after a decrement. If interval > 0, ctr reloads for periodic
+ * firing; if interval == 0, the timer stays disarmed (ctr == 0) until re-armed.
  */
 typedef struct SM_TimeEvt {
     struct SM_TimeEvt *next;   /**< Next node in the per-instance linked list */

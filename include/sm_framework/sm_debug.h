@@ -45,6 +45,10 @@ extern "C" {
  *
  * @param interface Platform output interface ID (passed to HAL)
  * @return true if initialization succeeded
+ *
+ * @note Process-global subsystem: level mask and tag table are shared across
+ *       all SM_Handle_t instances — not per state machine. Typical for UART/log
+ *       routing; register tags once per firmware image.
  */
 bool SM_Debug_Init(uint8_t interface);
 

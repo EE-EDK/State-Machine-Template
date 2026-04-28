@@ -16,8 +16,8 @@
  *     so corruption is detected at runtime.
  *
  *   - SM_BOUNDED_LOOP_BEGIN / SM_BOUNDED_LOOP_END
- *     Hard-bounded loop wrapper that fires SM_INVARIANT if the loop
- *     does not terminate within the declared bound.
+ *     Hard-bounded for-loop; postcondition verifies the counter never ran past
+ *     the declared bound (covers both normal exhaustion and early break).
  *
  * All macros depend on SM_FEATURE_ASSERT -- when it is 0 every macro
  * compiles to ((void)0) or an empty body, leaving zero overhead.
@@ -112,14 +112,15 @@ extern "C" {
 /* =============================================================================
  * BOUNDED LOOP
  *
- * Wraps a for-loop with a hard upper bound. If the loop body never breaks
- * out before the bound, SM_INVARIANT fires with the given assertion ID.
+ * Wraps `for (; var < bound; var++)`. After the loop, verifies
+ * `var <= cached_bound` so both exhaustive iteration (var == bound) and
+ * early `break` (var < bound) satisfy the invariant. The for-condition itself
+ * prevents more than `bound` iterations.
  *
  * Usage:
  *   SM_BOUNDED_LOOP_BEGIN(i, max_iters, 350)
  *   {
- *       // loop body -- break when done
- *       if (done) break;
+ *       // body -- optional break when done
  *   }
  *   SM_BOUNDED_LOOP_END(i, max_iters, 350)
  * ===========================================================================*/
@@ -138,7 +139,7 @@ extern "C" {
         for (; var_ < var_##_bound_; var_++) {
 
 /**
- * @brief End a hard-bounded loop -- checks that the loop terminated
+ * @brief End a hard-bounded loop -- verifies counter did not exceed bound
  *
  * @param var_    Same counter name passed to SM_BOUNDED_LOOP_BEGIN
  * @param bound_  Same bound value (not re-evaluated, uses cached copy)
@@ -146,7 +147,7 @@ extern "C" {
  */
 #define SM_BOUNDED_LOOP_END(var_, bound_, id_) \
         } \
-        SM_INVARIANT(id_, var_ < var_##_bound_); \
+        SM_INVARIANT(id_, var_ <= var_##_bound_); \
     }
 
 #ifdef __cplusplus

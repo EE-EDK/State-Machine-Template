@@ -78,6 +78,13 @@ static void sm_queue_update_watermark(SM_EventQueue_t *q)
  * Used for SM_INTERNAL_TIMEOUT and deferred-event recall.
  * NOT ISR-safe by itself -- caller must already be in a safe context
  * (SM_Process runs from task context, not ISR).
+ *
+ * Ordering vs SM_PostEvent(): user posts only use the front slot when both
+ * front_valid is false *and* the ring is empty (strict FIFO among user posts).
+ * Internal posts use the front slot whenever front_valid is false. If the ring
+ * already holds events, an internal post can occupy the front slot ahead of the
+ * oldest ring event — internal/trampoline traffic effectively has priority over
+ * queued backlog (still FIFO among ring-only events).
  */
 static bool sm_post_internal(SM_Handle_t sm, uint16_t event, uint32_t data)
 {
@@ -374,6 +381,9 @@ void SM_Process(SM_Handle_t sm)
     /* --- Get current state descriptor --- */
     const SM_StateDesc_t *state_desc = sm_get_state_desc(sm, sm->current_state);
     SM_REQUIRE(202, state_desc != NULL);
+    if (state_desc == NULL) {
+        return;
+    }
 
     /* --- on_entry on first cycle after transition --- */
     if (sm->state_entered) {
@@ -445,6 +455,10 @@ void SM_Process(SM_Handle_t sm)
                 uint16_t new_state = trans->to_state;
 
                 SM_REQUIRE(203, new_state < SM_STATE_COUNT);
+                if (new_state >= SM_STATE_COUNT) {
+                    SM_LOG_WARN("SM_Process: drop transition (invalid to_state=%u)",
+                                (unsigned)new_state);
+                } else {
 
                 /* --- Exit old state --- */
                 if (state_desc != NULL && state_desc->on_exit != NULL) {
@@ -478,6 +492,7 @@ void SM_Process(SM_Handle_t sm)
                     sm->stats.state_entry_counts[new_state]++;
                 }
 #endif
+                }
             } else {
                 SM_LOG_VERBOSE("SM_Process: event=%u data=%lu -- no transition from state %u",
                                (unsigned)evt.event, (unsigned long)evt.data,
@@ -892,7 +907,7 @@ void SM_TimeEvt_Tick_(SM_Handle_t sm)
         if (te->ctr > 0U) {
             te->ctr--;
 
-            /* QP/C convention: fire when ctr reaches 0 after decrement */
+            /* Matches sm_types.h: countdown posts when ctr hits 0 after tick */
             if (te->ctr == 0U) {
                 /* Post the event */
                 (void)sm_post_internal(sm, te->sig, te->data);

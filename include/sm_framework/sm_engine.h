@@ -43,13 +43,16 @@ bool SM_Init(SM_Handle_t sm, const SM_Config_t *config);
 /**
  * @brief Process one iteration of the state machine
  *
- * Dequeues one event, evaluates transitions, executes state callbacks.
- * Should be called periodically (every SM_TASK_PERIOD_MS).
+ * Dequeues one event, evaluates transitions, executes state callbacks,
+ * ticks time events, and advances RTC processing. Intended to run from the
+ * main/task context on a periodic schedule (e.g. SM_TASK_PERIOD_MS).
  *
  * @param sm Handle to the state machine instance
  *
  * @warning Do not call from ISR context.
- * @note Phase 1 stub -- full implementation in Phase 2.
+ * @warning Do not call recursively from inside state callbacks, guards,
+ *          transition actions, or hooks invoked by this function — re-entering
+ *          SM_Process on the same SM_Handle_t corrupts runtime state.
  */
 void SM_Process(SM_Handle_t sm);
 
@@ -72,13 +75,20 @@ void SM_Reset(SM_Handle_t sm);
 /**
  * @brief Post an event to the state machine's event queue
  *
- * ISR-SAFE: Uses critical sections. Can be called from interrupts.
- * Events are processed in FIFO order by SM_Process().
+ * ISR-SAFE: Uses critical sections. Can be called from interrupts among
+ * user-defined events with IDs `< SM_EVENT_COUNT`.
+ * Events delivered to SM_Process() are FIFO for user posts when using the fast
+ * front-slot path (empty queue + empty front). Once the ring holds events,
+ * ordering remains FIFO for user traffic. Framework-internal posts (timeouts,
+ * deferred recall) may use the front slot under looser rules — see implementation
+ * notes in sm_engine.c (`sm_post_internal`).
  *
  * @param sm    Handle to the state machine instance
  * @param event User-defined event ID
  * @param data  Event payload (uint32_t)
- * @return true if event enqueued, false if queue full or invalid params
+ * @return true if event enqueued, false if queue full or invalid params.
+ *         Prefer checking this return rather than SM_EventQueueIsFull() before
+ *         posting (atomic enqueue decision).
  */
 bool SM_PostEvent(SM_Handle_t sm, uint16_t event, uint32_t data);
 
@@ -91,6 +101,9 @@ bool SM_PostEvent(SM_Handle_t sm, uint16_t event, uint32_t data);
  *
  * @param sm Handle to the state machine instance
  * @return true if queue is full (SM_PostEvent would fail)
+ *
+ * @note Diagnostic only: not atomic with SM_PostEvent from an ISR — an ISR
+ *       may post between this check and a subsequent action (TOCTOU).
  */
 bool SM_EventQueueIsFull(SM_Handle_t sm);
 
@@ -99,6 +112,8 @@ bool SM_EventQueueIsFull(SM_Handle_t sm);
  *
  * @param sm Handle to the state machine instance
  * @return true if no events pending
+ *
+ * @note Diagnostic only; same TOCTOU caveat as SM_EventQueueIsFull.
  */
 bool SM_EventQueueIsEmpty(SM_Handle_t sm);
 
@@ -107,6 +122,8 @@ bool SM_EventQueueIsEmpty(SM_Handle_t sm);
  *
  * @param sm Handle to the state machine instance
  * @return Number of events currently queued
+ *
+ * @note Diagnostic only; same TOCTOU caveat as SM_EventQueueIsFull.
  */
 uint8_t SM_EventQueueDepth(SM_Handle_t sm);
 
@@ -200,6 +217,10 @@ bool SM_GetStateHistory(SM_Handle_t sm, uint16_t *buf, uint8_t buf_len, uint8_t 
  * @param sm         Handle to the state machine instance
  * @param transition Pointer to transition definition to add
  * @return true if added, false if table full or invalid parameters
+ *
+ * @warning Not synchronized with ISR posting or concurrent SM_Process — call
+ *          only from boot/initialization or the same non-ISR context as the
+ *          state machine runtime (never from an interrupt).
  */
 bool SM_AddTransition(SM_Handle_t sm, const SM_Transition_t *transition);
 
@@ -255,8 +276,11 @@ void SM_TimeEvt_Init(SM_TimeEvt_t *te, SM_Handle_t sm, uint16_t sig, uint32_t da
  * Inserts the time event into the instance's linked list.
  *
  * @param te        Pointer to an initialized SM_TimeEvt_t
- * @param ticks     Initial delay in SM_Process ticks (must be > 0)
- * @param interval  Auto-reload value (0 = one-shot, >0 = periodic)
+ * @param ticks     Initial countdown; decremented once per SM_TimeEvt_Tick_
+ *                  call (invoked from SM_Process). Must be > 0. Event posts
+ *                  when the counter reaches 0 after a tick.
+ * @param interval  Auto-reload countdown after each fire (0 = one-shot until
+ *                  disarmed or re-armed)
  */
 void SM_TimeEvt_Arm(SM_TimeEvt_t *te, uint32_t ticks, uint32_t interval);
 
