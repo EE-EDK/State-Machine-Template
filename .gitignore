@@ -51,3 +51,7 @@ venv/
 
 # Environment
 .env
+
+# Ephemeral graph outputs (root GEMINI — do not commit)
+graphify-out/
+**/graphify-out/
