@@ -148,6 +148,13 @@ static const SM_Transition_t app_transitions[] = {
     { .from_state = STATE_INIT,    .event = EVT_START, .to_state = STATE_RUNNING,
       ._reserved = 0, .guard = NULL, .action = NULL },
 
+    /* INIT --SM_EVT_TIMEOUT--> STOPPED (failsafe: STATE_INIT sets
+     * timeout_ms = 5000, so if no start command arrives within 5 s the
+     * machine halts instead of waiting forever. This demo starts within a
+     * few ms, so the route exists but never fires here.) */
+    { .from_state = STATE_INIT,    .event = SM_EVT_TIMEOUT, .to_state = STATE_STOPPED,
+      ._reserved = 0, .guard = NULL, .action = NULL },
+
     /* RUNNING --EVT_STOP--> STOPPED */
     { .from_state = STATE_RUNNING, .event = EVT_STOP,  .to_state = STATE_STOPPED,
       ._reserved = 0, .guard = NULL, .action = NULL },
@@ -190,8 +197,11 @@ int main(void)
 
     printf("Running state machine for 20 iterations...\n\n");
 
-    /* Main loop */
+    /* Main loop -- advance the sim clock 1 ms per iteration so time-based
+     * features (STATE_INIT's 5 s timeout failsafe) are live, not
+     * decorative. On hardware the clock advances on its own. */
     for (int i = 0; i < 20; i++) {
+        SM_Platform_SimTick();
         SM_Process(&sm_ctx);
 
         if ((i % 5) == 0) {

@@ -162,6 +162,7 @@ repo — works in any clone, no install needed).
 
 Rules:
 - Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- For questions about a specific state machine (states, transitions, timeouts), read graphify-out/MACHINES.md — per-machine Mermaid diagrams, timing tables, and validator findings (V1 unreachable states, V2 timeout without SM_EVT_TIMEOUT route, V3 dwell>timeout, V4 terminal states, V5 fully-guarded events). Application machines and test fixtures are listed separately; only application WARNs matter
 - If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
 - After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` (or `python3 -m graphify.watch`) from the repo root to keep the graph current
 - graphify-out/ stays gitignored (ephemeral, regenerable output)

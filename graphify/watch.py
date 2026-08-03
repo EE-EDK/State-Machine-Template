@@ -14,6 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .analyze import Graph, build_graph
+from .machines import extract_machines, render_machines
 
 OUT_DIR = "graphify-out"
 GOD_NODE_COUNT = 12
@@ -59,6 +60,10 @@ def _write_report(root: Path, g: Graph) -> None:
                  f"**{len(g.functions)}**")
     lines.append(f"- Call edges: **{total_edges}**")
     lines.append(f"- Communities: **{len(by_community)}**")
+    lines.append("")
+    lines.append("State-machine-level graph (per-machine diagrams, timing "
+                 "tables, validator findings): see "
+                 "[MACHINES.md](MACHINES.md).")
     lines.append("")
     lines.append("## God nodes (highest call-graph degree)")
     lines.append("")
@@ -143,9 +148,14 @@ def _rebuild_code(root: Path) -> None:
     g = build_graph(root)
     _write_report(root, g)
     _write_wiki(root, g)
+    machines = extract_machines(root, g.files)
+    (root / OUT_DIR / "MACHINES.md").write_text(
+        render_machines(machines), encoding="utf-8")
+    warn = sum(1 for m in machines
+               for sev, _, _ in m.findings if sev == "WARN")
     print(f"graphify: {len(g.functions)} functions, "
-          f"{sum(len(f.calls) for f in g.functions.values())} call edges "
-          f"-> {OUT_DIR}/")
+          f"{sum(len(f.calls) for f in g.functions.values())} call edges, "
+          f"{len(machines)} machines ({warn} WARN) -> {OUT_DIR}/")
 
 
 if __name__ == "__main__":
