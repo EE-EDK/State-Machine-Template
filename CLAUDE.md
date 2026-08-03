@@ -122,6 +122,7 @@ All phases complete. Maintenance items only:
 - [ ] Fix cppcheck installation (std.cfg path hardcoded to non-existent R: drive)
 - [ ] GitHub Actions CI (deferred from Phase 6)
 - [ ] gcov/lcov coverage reporting (deferred from Phase 6)
+- [ ] **Replace graphify's regex extraction with a clang-based (libclang AST) analyzer.** The current repo-local package is regex-based — honest for navigation/god nodes but not a real parser. Goal is the absolute best state machine: the graph must be precise enough to feed the Phase B/C host tooling (transition coverage maps, trace symbol tables, generated-table cross-checks). Keep the same report format (GRAPH_REPORT.md + wiki/index.md) and the same `graphify.watch._rebuild_code` contract so nothing downstream changes.
 
 ## Completed Phases
 - [x] Phase 0: Cleanup — legacy files removed (commit ed92613)
@@ -164,3 +165,4 @@ Rules:
 - If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
 - After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` (or `python3 -m graphify.watch`) from the repo root to keep the graph current
 - graphify-out/ stays gitignored (ephemeral, regenerable output)
+- Planned: swap the regex extraction layer for a clang/libclang AST analyzer (see TODO) — same output format and rebuild contract, higher precision

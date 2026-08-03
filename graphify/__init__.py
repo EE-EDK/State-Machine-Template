@@ -15,6 +15,13 @@ function-level call graph plus file include edges, and writes:
 Output is deterministic (sorted) so regenerated graphs diff cleanly.
 graphify-out/ is gitignored (ephemeral output) -- regenerate after code
 changes rather than committing it.
+
+Roadmap: the regex extraction in analyze.py will be replaced by a
+clang/libclang AST analyzer (see CLAUDE.md TODO). The public contract --
+``graphify.watch._rebuild_code(root)`` and the GRAPH_REPORT.md /
+wiki/index.md output format -- is stable and will not change; only the
+extraction precision improves. Downstream tooling should depend on the
+contract, not on the extraction internals.
 """
 
 __version__ = "1.0.0"
