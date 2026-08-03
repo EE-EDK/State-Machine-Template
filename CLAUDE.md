@@ -118,9 +118,12 @@ See `docs_dev/task_plan.md` for full rationale. Key: D6 frontEvt, D7 DIS, D8 bou
 - Do not leave all debug messages enabled in production (use SM_DEBUG_LEVEL and SM_Debug_EnableLevel)
 
 ## TODO
-All phases complete. Maintenance items only:
+All phases complete. Active roadmap:
+- [ ] **Phase B — model as source of truth (`smgen`):** TOML machine models → generated C tables with build-failing validation, committed artifacts, round-trip verification against graphify's extractor, model hash in firmware. Full plan with decisions D12–D17 and phase gates B1–B4: `docs_dev/phase_b_model_plan.md`. Start with B1 (schema + validator).
+
+Maintenance items:
 - [ ] Fix cppcheck installation (std.cfg path hardcoded to non-existent R: drive)
-- [ ] GitHub Actions CI (deferred from Phase 6)
+- [ ] GitHub Actions CI (deferred from Phase 6; natural home for `smgen check` once B3 lands)
 - [ ] gcov/lcov coverage reporting (deferred from Phase 6)
 - [ ] **Replace graphify's regex extraction with a clang-based (libclang AST) analyzer.** The current repo-local package is regex-based — honest for navigation/god nodes but not a real parser. Goal is the absolute best state machine: the graph must be precise enough to feed the Phase B/C host tooling (transition coverage maps, trace symbol tables, generated-table cross-checks). Keep the same report format (GRAPH_REPORT.md + wiki/index.md) and the same `graphify.watch._rebuild_code` contract so nothing downstream changes.
 
@@ -137,7 +140,9 @@ All phases complete. Maintenance items only:
 
 ## Session Continuity
 
-**Last session:** v4.0.0 semantic release + graphify package + findings verification (this session's commits)
+**Last session:** v4.0.0 semantic release + graphify (code + machine graphs, validator) + Phase B plan (this session's commits)
+
+**2026-08-03 (later still) — machine graphs + Phase B plan:** graphify gained machine-level extraction (`graphify/machines.py`): per-machine Mermaid diagrams + V1–V5 validator in graphify-out/MACHINES.md; first run caught basic_example's dead 5s timeout (fixed: SM_EVT_TIMEOUT failsafe route + SimTick). Phase B planned in `docs_dev/phase_b_model_plan.md` — smgen (TOML → generated C), decisions D12–D17 (committed artifacts, tomllib zero-dep, linker-enforced callbacks, schema-impossible unrouted timeouts, model hash, project-level shared counts), phases B1–B4 with exit criteria. Next concrete step: B1.
 
 **2026-08-03 (later) — graphify + findings closure:** Repo-local `graphify/` package added (stdlib-only; satisfies the rebuild contract above — the previous workspace-level tool wasn't available in remote containers). Full verification pass over docs_dev/findings.md Bug Inventory: all B1–B13 confirmed closed with a status table added to the file; B12 had a real v3 residue (dequeue outside critical section) that v4 closed; string-table bounds in sm_debug.c now derive from the array (`SM_LEVEL_TAG_COUNT`) per the "Improve" list. Pushed to main per explicit authorization.
 
