@@ -4,6 +4,32 @@
 >
 > **2026-04-27 maintenance:** Deep review + doc pass (`264a623` and following): `SM_BOUNDED_LOOP_*` postcondition corrected (exhaustive bounded loops valid); `SM_Process` runtime guards when `SM_FEATURE_ASSERT` is off; invalid `to_state` dropped with warning; API docs for queue ordering (internal vs user posts), ISR queue snapshot TOCTOU, no `SM_Process` reentrancy; time-event countdown semantics aligned with `SM_TimeEvt_Tick_`; debug subsystem documented as process-global.
 
+## v4.0 Verification Pass (2026-08-03)
+
+Every Bug Inventory item was re-verified against the shipping v4.0 sources.
+All are confirmed closed:
+
+| # | Legacy bug | v4.0 status |
+|---|-----------|-------------|
+| B1/B2 | Debug enable/periodic no-ops | Fixed in v3 (`sm_debug.c` stores level mask + `sm_periodic_interval_ms`; covered by `test_debug`) |
+| B3 | snprintf negative cast to uint32 | Fixed in v3 (`sm_debug.c` clamps negative + overlong returns) |
+| B4 | Boot `timestamp == 0` sentinel | Documented in v3 headers (valid-at-boot noted) |
+| B5 | GetHistoryCount always 16 | Fixed in v3 (returns `history_count`) |
+| B6 | No bounds check on `current_state` | Fixed in v3 (`sm_get_state_desc` range-checks; `SM_REQUIRE(202)`) |
+| B7 | No bounds check on `error.code` | Obsolete — v3 error handler never indexes by code |
+| B8/B9 | Legacy config/template defects | Files removed in Phase 0 |
+| B10 | Sim time double-increment | Fixed in v3 (`SimTick`-only advance; `GetTimeMs` pure read) |
+| B11 | Timeout fires every cycle | Fixed in v3 (once-latch); v4 hardens it further — latch sets only on successful post, so a full queue cannot permanently swallow the timeout |
+| B12 | Event read/clear not in critical section | Post side fixed in v3; **dequeue side had a v3 residue** — `sm_event_dequeue` ran without a critical section. Closed in v4 (dequeue is now inside `EnterCritical`/`ExitCritical`) |
+| B13 | Duplicate include | Gone from current examples |
+
+Code Quality "Improve" items: bounds checks and `volatile` discipline landed
+in v3; the string-table-vs-count item closed in v4 (`sm_debug.c` derives
+`SM_LEVEL_TAG_COUNT` from the array instead of a magic `4U` guard). The
+QP/C-adoption table's "LIFO recall to front" row reflects QP/C's naming —
+v4.0 semantics are FIFO among deferred events with true front insertion
+(see MIGRATION.md).
+
 ## Review Findings (Pre-Rewrite Audit)
 
 ### Bug Inventory (Must Fix)

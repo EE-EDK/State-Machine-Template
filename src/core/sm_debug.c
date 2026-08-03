@@ -75,6 +75,10 @@ static const char * const sm_level_tags[] = {
     "VRB"     /* 4 */
 };
 
+/* Bounds derive from the table itself so the lookup guard can never drift
+ * from the array length (findings.md "Improve": table size vs count). */
+#define SM_LEVEL_TAG_COUNT (sizeof(sm_level_tags) / sizeof(sm_level_tags[0]))
+
 /* =============================================================================
  * DEBUG INITIALIZATION
  * ===========================================================================*/
@@ -237,7 +241,7 @@ void SM_Debug_Print(uint8_t level, const char *fmt, ...)
     }
 
     /* Level tag */
-    const char *tag = (level <= 4U) ? sm_level_tags[level] : "???";
+    const char *tag = (level < SM_LEVEL_TAG_COUNT) ? sm_level_tags[level] : "???";
 
     /* Format with timestamp and level tag */
     uint32_t ts = SM_Platform_GetTimeMs();
@@ -292,7 +296,7 @@ void SM_Debug_PrintTagged(int8_t tag_id, uint8_t level, const char *fmt, ...)
     }
 
     /* Level tag */
-    const char *ltag = (level <= 4U) ? sm_level_tags[level] : "???";
+    const char *ltag = (level < SM_LEVEL_TAG_COUNT) ? sm_level_tags[level] : "???";
 
     /* Resolve module tag name */
     const char *module_name = "???";
