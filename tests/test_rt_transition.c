@@ -2,8 +2,9 @@
  * @file test_rt_transition.c
  * @brief SM_AddTransition bounds + table capacity (runtime transitions enabled)
  *
- * Test 1 is the contract guard: event index must not equal SM_EVENT_COUNT.
- * (Requires event >= SM_EVENT_COUNT rejection — aligned with SM_PostEvent.)
+ * v4.0 contract: valid events are the user range (< SM_EVENT_COUNT) PLUS
+ * SM_EVT_TIMEOUT (== SM_EVENT_COUNT), so runtime transitions can handle
+ * state timeouts. Anything above SM_EVT_TIMEOUT is rejected.
  */
 #include "unity.h"
 #include "sm_framework/sm_framework.h"
@@ -41,13 +42,28 @@ void setUp(void)
     TEST_ASSERT_TRUE(SM_Init(s_sm, &s_cfg));
 }
 
-/* 1 — contract: out-of-range event is rejected */
-void test_rt_rejects_event_equal_to_count(void)
+/* 1a — v4.0 contract: SM_EVT_TIMEOUT (== SM_EVENT_COUNT) is ACCEPTED so
+ * runtime transitions can handle state timeouts */
+void test_rt_accepts_timeout_event(void)
 {
     SM_Transition_t t = {
         .from_state = TEST_STATE_INIT,
         .to_state   = TEST_STATE_RUNNING,
-        .event      = (uint16_t)SM_EVENT_COUNT,
+        .event      = SM_EVT_TIMEOUT,
+        ._reserved  = 0U,
+        .guard      = NULL,
+        .action     = NULL
+    };
+    TEST_ASSERT_TRUE(SM_AddTransition(s_sm, &t));
+}
+
+/* 1b — contract: events above SM_EVT_TIMEOUT are rejected */
+void test_rt_rejects_event_above_timeout(void)
+{
+    SM_Transition_t t = {
+        .from_state = TEST_STATE_INIT,
+        .to_state   = TEST_STATE_RUNNING,
+        .event      = (uint16_t)(SM_EVENT_COUNT + 1U),
         ._reserved  = 0U,
         .guard      = NULL,
         .action     = NULL
@@ -200,7 +216,8 @@ int main(void)
 {
     UNITY_BEGIN();
 #if SM_FEATURE_RUNTIME_TRANSITIONS
-    RUN_TEST(test_rt_rejects_event_equal_to_count);
+    RUN_TEST(test_rt_accepts_timeout_event);
+    RUN_TEST(test_rt_rejects_event_above_timeout);
     RUN_TEST(test_rt_rejects_from_state_out_of_range);
     RUN_TEST(test_rt_rejects_to_state_out_of_range);
     RUN_TEST(test_rt_rejects_null_sm);

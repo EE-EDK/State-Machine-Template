@@ -1,19 +1,24 @@
-# State Machine Framework v3.0
+# State Machine Framework v4.0
 
 Production-grade, handle-based state machine framework for embedded C systems. State-agnostic, multi-instance, zero-heap, ISR-safe. Designed for bare-metal microcontrollers from Cortex-M0 to application processors, with a weak-symbol HAL that ports in minutes.
 
-Built on patterns from QP/C 8.x: frontEvt optimization, Duplicate Inverse Storage, numeric assertion IDs, and intrusive time-event linked lists.
+Built on patterns from QP/C 8.x: frontEvt fast path, Duplicate Inverse Storage, numeric assertion IDs, and intrusive time-event linked lists.
+
+v4.0 corrects the engine's execution semantics: strict-FIFO event delivery for all sources, atomic exit→action→entry transitions, a bounded multi-event drain per `SM_Process`, and millisecond deadline-based (drift-free) time events. See `MIGRATION.md` for the v3.0 → v4.0 changes.
 
 ## Features
 
 - **Handle-based multi-instance** -- `SM_Handle_t = SM_Context_t*`, no extern globals, run N machines in one binary
 - **State-agnostic** -- user defines all states and events as enums; framework imposes no application semantics
 - **Zero heap** -- user statically allocates `SM_Context_t`; all buffers sized at compile time
-- **ISR-safe event queue** -- ring buffer with QP/C frontEvt bypass for the common single-event case
+- **ISR-safe event queue** -- strict FIFO in post order for all sources, with a QP/C frontEvt fast path for the common single-event case
 - **Const flash transitions** -- `SM_Transition_t[]` in ROM with optional guard conditions and transition actions
+- **Atomic transitions** -- exit → action → entry complete within one `SM_Process` call; observers never see a state before its entry ran
+- **Bounded event drain** -- up to `SM_MAX_EVENTS_PER_PROCESS` events per `SM_Process`, so chained sequences complete in one call with a hard WCET bound
 - **3-tier error handling** -- MINOR (auto-recover), NORMAL (managed recovery), CRITICAL (system lock with DIS protection)
-- **Time events** -- intrusive linked-list timers, one-shot or periodic, arm/disarm from any context
-- **Deferred events** -- defer/recall pattern with LIFO recall to front of main queue
+- **Time events** -- millisecond deadline-based timers (wrap-safe, drift-free), one-shot or periodic, arm/disarm from any context, capacity enforced at arm
+- **State timeout** -- public `SM_EVT_TIMEOUT` event usable directly in transition tables
+- **Deferred events** -- defer/recall pattern; FIFO among deferred events, recalled to the true front of the main queue
 - **Safety** -- DIS verification on state and critical_lock, hard-bounded loops, numeric assertion IDs via `SM_DEFINE_MODULE` + `SM_REQUIRE`
 - **Debug** -- per-module tags (16 max), runtime level enable/disable, compile-time stripping to zero overhead, HexDump
 - **HAL** -- weak-symbol overrides for timing, critical sections, watchdog, sleep, NVS, reset reason, platform capabilities
@@ -103,7 +108,7 @@ SM_Init(&comms_ctx, &comms_cfg);
 
 ### Event queue with frontEvt
 
-The event queue uses a ring buffer with a "front event" bypass slot. When the queue is empty, `SM_PostEvent` places the event directly in the front slot, skipping the ring buffer entirely. `SM_Process` checks the front slot first, then drains the ring. This eliminates a round-trip for the common single-event case (QP/C pattern D6).
+The event queue uses a ring buffer with a "front event" bypass slot. When the queue is **completely empty**, a post places the event directly in the front slot, skipping the ring buffer entirely; `SM_Process` dequeues the front slot first, then the ring FIFO. Because the front slot is only claimed when nothing is pending, delivery is strict FIFO in post order for every source -- user, ISR, timeout, and time events (QP/C pattern D6, revised in v4.0). The one deliberate exception is `SM_RecallEvent`, which inserts at the true front by design.
 
 ### Const flash transition tables
 
@@ -116,7 +121,7 @@ static const SM_Transition_t transitions[] = {
 };
 ```
 
-Guards return `bool` -- if false, the transition is skipped. Actions execute between the source state's `on_exit` and the destination state's `on_entry`.
+Guards return `bool` -- if false, the transition is skipped. Actions execute between the source state's `on_exit` and the destination state's `on_entry`; the full exit → action → entry sequence completes atomically within the same `SM_Process` call (v4.0).
 
 ### State descriptors with callbacks
 
@@ -172,8 +177,8 @@ void SM_Reset(SM_Handle_t sm);
 ```
 
 - `SM_Init` -- initialize instance with config (state descriptors, transitions, initial state). Returns false on invalid params.
-- `SM_Process` -- dequeue one event, evaluate transitions, execute callbacks. Call periodically.
-- `SM_Reset` -- flush queue, clear errors, return to initial state. Blocked if critical lock is active.
+- `SM_Process` -- run one cycle: on_execute, timeout check, time-event tick, then drain up to `SM_MAX_EVENTS_PER_PROCESS` events with atomic exit→action→entry per transition. Call periodically.
+- `SM_Reset` -- flush queue, clear errors, return to initial state (entry runs on the next `SM_Process`). Blocked if critical lock is active.
 
 ### Event Posting
 
@@ -193,8 +198,8 @@ uint8_t SM_EventQueueGetMin(SM_Handle_t sm);  /* High-water mark for queue sizin
 
 **Integration notes**
 
-- Prefer **`SM_PostEvent`’s return value** over “check `SM_EventQueueIsFull` then post” — another context (e.g. ISR) can fill the queue between the check and the post (TOCTOU).
-- **User events** (`event < SM_EVENT_COUNT`) use the front-slot fast path only when both the ring is empty and the front slot is free; otherwise ordering is FIFO among queued items. **Framework-internal posts** (state timeout, time events, deferred recall) use a separate internal path and may place an event in the front slot ahead of older ring traffic — see `sm_post_internal` in `sm_engine.c`.
+- Prefer **`SM_PostEvent`’s return value** over “check `SM_EventQueueIsFull` then post” — another context (e.g. ISR) can fill the queue between the check and the post (TOCTOU). `SM_EventQueueIsFull` mirrors `SM_PostEvent`'s accept logic exactly (v4.0).
+- **Delivery is strict FIFO in post order for all sources** — user, ISR, state timeout, and time events share one ordering rule (v4.0). The only exception is `SM_RecallEvent`, which inserts at the true front by design.
 - **`SM_Process`** must run from task/main context only — not from ISR, and **not recursively** from entry/execute/exit, guards, or transition actions on the same handle.
 - **`SM_AddTransition`** (when enabled) is not synchronized with ISR posting; use only from init or the same runtime context as `SM_Process`.
 - **Invalid rows in the transition table** (e.g. `to_state >= SM_STATE_COUNT`) are ignored at runtime with a warning when debug is enabled; validate tables at boot if you need a hard fault.
@@ -215,11 +220,11 @@ Requires `SM_FEATURE_TIME_EVENTS == 1` (default on).
 
 ```c
 void SM_TimeEvt_Init(SM_TimeEvt_t *te, SM_Handle_t sm, uint16_t sig, uint32_t data);
-void SM_TimeEvt_Arm(SM_TimeEvt_t *te, uint32_t ticks, uint32_t interval);  /* interval=0 for one-shot */
+bool SM_TimeEvt_Arm(SM_TimeEvt_t *te, uint32_t delay_ms, uint32_t interval_ms);  /* interval_ms=0 for one-shot */
 bool SM_TimeEvt_Disarm(SM_TimeEvt_t *te);
 ```
 
-Allocate `SM_TimeEvt_t` statically. `SM_TimeEvt_Arm` sets an initial **down-counter** in **ticks** (one decrement per `SM_TimeEvt_Tick_` call from `SM_Process`). The timer posts when the counter reaches **zero** after a tick. `interval` reloads the counter for periodic timers; `0` means one-shot until disarmed or re-armed.
+Allocate `SM_TimeEvt_t` statically. `SM_TimeEvt_Arm` schedules a **millisecond deadline** against `SM_Platform_GetTimeMs()` (v4.0): the timer fires when the deadline passes, checked once per `SM_Process`, so late checks fire immediately instead of stretching with call cadence. `interval_ms` reloads periodically — deadlines advance by whole intervals (drift-free; periods missed during a stall coalesce into one event). Delay/interval must be < 2^31 ms (~24.8 days, wrap-safe). Returns `false` on bad arguments or when `SM_FEATURE_MAX_TIME_EVENTS` timers are already scheduled.
 
 ### Deferred Events
 
@@ -227,11 +232,11 @@ Requires `SM_FEATURE_DEFER == 1`.
 
 ```c
 bool SM_DeferEvent(SM_Handle_t sm, uint16_t event, uint32_t data);
-bool SM_RecallEvent(SM_Handle_t sm);   /* LIFO recall to front of main queue */
+bool SM_RecallEvent(SM_Handle_t sm);   /* oldest deferred event -> true front of main queue */
 void SM_FlushDeferred(SM_Handle_t sm);
 ```
 
-Not ISR-safe -- call from state callbacks or `SM_Process` context only.
+Not ISR-safe -- call from state callbacks or `SM_Process` context only. Recall pops deferred events **oldest first (FIFO)** and inserts each at the true front of the main queue, ahead of queued backlog. If the main queue is full the event stays deferred and recall returns false.
 
 ### Error Handling
 
@@ -370,8 +375,8 @@ The framework includes 9 test suites built on [Unity](https://github.com/ThrowTh
 |-------|-------|----------|
 | `test_event_queue` | 10 | frontEvt, ring buffer, watermark, delivery order |
 | `test_engine` | 21 | init, process, guards, timeout, dwell, history |
-| `test_time_events` | 11 | arm, disarm, one-shot, periodic, multi-timer |
-| `test_deferred` | 9 | defer, recall LIFO-to-front, flush, capacity |
+| `test_time_events` | 15 | ms deadlines, one-shot, periodic, drift/coalescing, capacity |
+| `test_deferred` | 10 | defer, FIFO recall to true front, flush, capacity |
 | `test_error` | 18 | 3-tier errors, DIS, stats, recovery callbacks |
 | `test_debug` | 14 | levels, tags, periodic interval, hexdump |
 | `test_safety` | 11 | DIS corruption detection, bounded loops, SM_REQUIRE |
@@ -394,6 +399,7 @@ MIT License. See [LICENSE](LICENSE).
 
 | Version | Date | Description |
 |---------|------|-------------|
-| **v3.0.0** | 2026-04-18 | Complete rewrite: handle-based multi-instance, state-agnostic, QP/C patterns (frontEvt, DIS, time events, deferred events), 3-tier error handler, per-module debug tags, weak-symbol HAL with watchdog/sleep/NVS/capabilities, 118 unit tests |
+| **v4.0.0** | 2026-08-03 | Semantic correction release: strict-FIFO event delivery for all sources, atomic exit→action→entry transitions, bounded multi-event drain per SM_Process, millisecond deadline-based drift-free time events with enforced capacity, public SM_EVT_TIMEOUT, exact SM_EventQueueIsFull, true front-insert recall that preserves the event on a full queue. See MIGRATION.md |
+| v3.0.0 | 2026-04-18 | Complete rewrite: handle-based multi-instance, state-agnostic, QP/C patterns (frontEvt, DIS, time events, deferred events), 3-tier error handler, per-module debug tags, weak-symbol HAL with watchdog/sleep/NVS/capabilities, 118 unit tests |
 | v2.0.0 | 2025-12-30 | Modular rewrite: platform abstraction, CMake build, 10 pre-configured states |
 | v1.0.0 | 2025-10-25 | Initial release |

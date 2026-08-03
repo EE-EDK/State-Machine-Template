@@ -1,4 +1,85 @@
-# Migration Guide: v2.0 to v3.0
+# Migration Guide
+
+# v3.0 to v4.0
+
+## Overview
+
+v4.0 is a **semantic** release: the API surface is almost unchanged, but the
+engine's execution semantics were corrected in ways that alter observable
+behavior. No flag preserves the old behavior for timers or transition
+atomicity -- the v3.0 semantics were the defects.
+
+## Breaking changes
+
+1. **Time events are millisecond-based (was: SM_Process call counts).**
+   `SM_TimeEvt_Arm(te, delay, interval)` arguments are now **milliseconds**
+   measured against `SM_Platform_GetTimeMs()`, not ticks of `SM_Process`.
+   A "500" timer now means 500 ms regardless of your call cadence; under
+   v3.0 it meant 500 *calls*, which stretched silently when the scheduler
+   was busy. Deadlines are wrap-safe (delay/interval < 2^31 ms). Periodic
+   timers advance deadline by whole intervals: drift-free, and periods
+   missed during a stall coalesce into ONE event (no catch-up burst).
+   - **Action:** if your code called `Arm(te, N, N)` meaning "N process
+     calls", convert to `Arm(te, N * SM_TASK_PERIOD_MS, ...)`.
+   - `SM_TimeEvt_Arm` now returns `bool`: `false` on invalid arguments or
+     when `SM_FEATURE_MAX_TIME_EVENTS` timers are already scheduled (v3.0
+     silently accepted over-capacity timers that then never fired).
+   - Expired one-shots unlink from the schedule; re-arm them freely.
+   - `SM_TimeEvt_t` fields changed: `ctr` is replaced by `deadline` +
+     `armed`. Code peeking at `te->ctr` (tests, debug dumps) must switch.
+
+2. **Transitions are atomic (was: entry deferred one call).**
+   `exit -> action -> state update -> entry` all run within the same
+   `SM_Process` call. Under v3.0, `on_entry` of the new state ran on the
+   *next* call, so `SM_GetState()` reported a state whose entry effects had
+   not happened yet -- a real hazard for any observer. The deferred-entry
+   path remains only for the initial state after `SM_Init` / `SM_Reset`.
+
+3. **SM_Process drains multiple events (was: exactly one).**
+   Up to `SM_MAX_EVENTS_PER_PROCESS` (default: `SM_EVENT_QUEUE_SIZE`)
+   events are processed per call, each with run-to-completion semantics.
+   Chained sequences (entry posts the next event) now complete in one call
+   instead of one call per step. Set `SM_MAX_EVENTS_PER_PROCESS` to `1` to
+   restore the v3.0 cadence if your timing analysis depended on it.
+
+4. **Strict FIFO for internal events (was: queue-jumping).**
+   Timeout and time-event posts now append behind queued backlog like any
+   other event. v3.0 let them claim the front slot ahead of earlier events
+   -- a priority inversion that could time out a state an already-queued
+   event was about to exit legitimately.
+
+5. **The timeout event is public: `SM_EVT_TIMEOUT`.**
+   Use it directly in transition tables (it equals `SM_EVENT_COUNT`; the
+   valid range for `SM_EVENT_COUNT` is now 1..65534). `SM_AddTransition`
+   accepts it, so runtime transitions can handle timeouts (v3.0 rejected
+   them). `SM_PostEvent` still rejects it -- only the engine may post it.
+   The timeout latch is only set when the post succeeds, so a full queue
+   can no longer permanently swallow a state's timeout.
+
+## Bug fixes that change observable behavior
+
+- **`SM_EventQueueIsFull` agreed with nothing.** It now mirrors
+  `SM_PostEvent`'s accept logic exactly. (v3.0 could report "not full"
+  while a post would be dropped -- deterministically, no ISR involved.)
+- **`SM_RecallEvent` now truly inserts at the front.** With the front slot
+  occupied it displaces the current front into the ring right behind the
+  recalled event (QP/C postLIFO). v3.0 appended to the BACK in that case,
+  contradicting its own documentation. On a full main queue the event now
+  **stays deferred** (v3.0 lost it). Recall order among deferred events is
+  FIFO -- oldest first -- as it always actually was; v3.0 docs claiming
+  "LIFO recall" described code that never existed.
+- **Timer capacity is enforced at `Arm`** (see item 1) instead of timers
+  past the bound silently never firing; the re-arm-past-bound list
+  corruption is gone with it.
+- **`SM_TimeEvt_Tick_` no longer holds one critical section across the
+  whole list walk plus every queue insertion.** Fires are collected under a
+  short lock and posted outside it. A disarm can race an already-collected
+  fire (the event may deliver once); that is the standard time-event
+  contract and is now documented.
+
+---
+
+# v2.0 to v3.0
 
 ## Overview
 

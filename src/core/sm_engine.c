@@ -1,24 +1,43 @@
 /**
  * @file sm_engine.c
- * @brief Core state machine engine implementation (v3.0 Phase 2)
- * @version 3.0.0
- * @date 2026-04-18
+ * @brief Core state machine engine implementation (v4.0)
+ * @version 4.0.0
+ * @date 2026-08-02
  *
  * @copyright Copyright (c) 2025-2026
  *
  * Handle-based, multi-instance state machine engine with:
- *   - QP/C frontEvt optimization (D6)
+ *   - Strict-FIFO event queue with frontEvt fast path (D6, revised v4.0)
  *   - Duplicate Inverse Storage on current_state and initialized (D7)
  *   - Numeric assertion IDs (D8) via SM_DEFINE_MODULE / SM_REQUIRE
- *   - Time events -- intrusive linked-list, arm/disarm, one-shot/periodic (D9)
- *   - Deferred events -- defer/recall with LIFO recall to front (D10)
+ *   - Time events -- deadline-based (ms), one-shot/periodic, drift-free (D9, v4.0)
+ *   - Deferred events -- FIFO recall to true queue front (D10, revised v4.0)
  *   - Guard conditions with multi-guard fallthrough (D6 extension)
- *   - State timeout (fire-once internal event)
- *   - Min dwell time enforcement
+ *   - State timeout via public SM_EVT_TIMEOUT (retries post until queued)
+ *   - Min dwell time enforcement (re-checked per drained event)
+ *   - Bounded event drain: up to SM_MAX_EVENTS_PER_PROCESS per SM_Process
+ *   - Atomic transitions: exit -> action -> state update -> entry in one call
  *   - HSM parent-state fallback (optional, SM_FEATURE_HSM)
  *   - Hard-bounded loops with SM_INVARIANT
  *
  * No extern globals. No heap. No application-specific state definitions.
+ *
+ * v4.0 semantic changes from v3.0 (see MIGRATION.md):
+ *   - Event delivery is strict FIFO in post order for ALL sources (user,
+ *     ISR, internal timeout, time events). Internal events no longer jump
+ *     the queue via the front slot.
+ *   - SM_Process drains up to SM_MAX_EVENTS_PER_PROCESS events per call
+ *     (was exactly one).
+ *   - A transition runs exit -> action -> entry atomically within the same
+ *     SM_Process call (entry no longer waits for the next call). The
+ *     deferred-entry path (state_entered flag) remains only for the initial
+ *     state after SM_Init / SM_Reset.
+ *   - Time events count milliseconds against SM_Platform_GetTimeMs()
+ *     deadlines (wrap-safe), not SM_Process invocations. Periodic timers
+ *     advance deadline by whole intervals (drift-free, missed periods
+ *     coalesce into a single event).
+ *   - SM_TimeEvt_Tick_ runs BEFORE the event drain, so a timer firing in
+ *     this cycle is normally delivered in this same cycle.
  *
  * Assertion ID ranges (sm_engine):
  *   100-199  SM_Init
@@ -37,28 +56,14 @@
 SM_DEFINE_MODULE("sm_engine");
 
 /* =============================================================================
- * INTERNAL CONSTANTS
- * ===========================================================================*/
-
-/**
- * @brief Internal timeout event
- *
- * Posted by SM_Process when a state's timeout_ms expires.  Defined as
- * (SM_EVENT_COUNT) so it sits one above the user's event range.
- * SM_PostEvent rejects events >= SM_EVENT_COUNT via its bounds check, so
- * this internal event uses a dedicated bypass path (sm_post_internal).
- */
-#define SM_INTERNAL_TIMEOUT  ((uint16_t)(SM_EVENT_COUNT))
-
-/* =============================================================================
  * INTERNAL HELPERS
  * ===========================================================================*/
 
 /**
  * @brief Update the queue-free watermark (nMin)
  *
- * Called after every successful enqueue.  Tracks the minimum number of free
- * slots that has ever been observed.
+ * Called after every successful enqueue (inside the critical section).
+ * Tracks the minimum number of free slots that has ever been observed.
  */
 static void sm_queue_update_watermark(SM_EventQueue_t *q)
 {
@@ -73,81 +78,86 @@ static void sm_queue_update_watermark(SM_EventQueue_t *q)
 }
 
 /**
- * @brief Internal event post that bypasses the event-range check
+ * @brief Strict-FIFO event post shared by SM_PostEvent and internal posts
  *
- * Used for SM_INTERNAL_TIMEOUT and deferred-event recall.
- * NOT ISR-safe by itself -- caller must already be in a safe context
- * (SM_Process runs from task context, not ISR).
+ * ISR-safe (critical section). The front slot is used only as a fast path
+ * when the queue is completely empty; otherwise events append to the ring.
+ * Because the front slot is always the oldest pending event, delivery order
+ * equals post order for every source -- user, ISR, timeout, and time events
+ * alike. (v3.0 allowed internal posts to claim the front slot ahead of ring
+ * backlog; that priority inversion is removed in v4.0.)
  *
- * Ordering vs SM_PostEvent(): user posts only use the front slot when both
- * front_valid is false *and* the ring is empty (strict FIFO among user posts).
- * Internal posts use the front slot whenever front_valid is false. If the ring
- * already holds events, an internal post can occupy the front slot ahead of the
- * oldest ring event — internal/trampoline traffic effectively has priority over
- * queued backlog (still FIFO among ring-only events).
+ * @return true if enqueued, false if the ring is full (event dropped;
+ *         counted in stats.total_events_dropped when statistics enabled)
  */
 static bool sm_post_internal(SM_Handle_t sm, uint16_t event, uint32_t data)
 {
     SM_EventQueue_t *q = &sm->event_queue;
+    bool result;
 
     SM_Platform_EnterCritical();
     {
-        if (!q->front_valid) {
-            /* Fast path: place directly into front slot */
+        if (!q->front_valid && q->count == 0U) {
+            /* Fast path: queue completely empty -- use the front slot */
             q->front.event = event;
             q->front._reserved = 0U;
             q->front.data = data;
             q->front_valid = true;
             sm_queue_update_watermark(q);
-            SM_Platform_ExitCritical();
-            return true;
+            result = true;
+        } else if (q->count >= SM_EVENT_QUEUE_SIZE) {
+            /* Ring full -- drop */
+            result = false;
+        } else {
+            q->items[q->head].event = event;
+            q->items[q->head]._reserved = 0U;
+            q->items[q->head].data = data;
+            q->head = (uint8_t)((q->head + 1U) % SM_EVENT_QUEUE_SIZE);
+            q->count++;
+            sm_queue_update_watermark(q);
+            result = true;
         }
 
-        if (q->count >= SM_EVENT_QUEUE_SIZE) {
-            SM_Platform_ExitCritical();
 #if SM_FEATURE_STATISTICS
+        if (result) {
+            sm->stats.total_events_posted++;
+        } else {
             sm->stats.total_events_dropped++;
-#endif
-            return false;
         }
-
-        q->items[q->head].event = event;
-        q->items[q->head]._reserved = 0U;
-        q->items[q->head].data = data;
-        q->head = (uint8_t)((q->head + 1U) % SM_EVENT_QUEUE_SIZE);
-        q->count++;
-        sm_queue_update_watermark(q);
+#endif
     }
     SM_Platform_ExitCritical();
-    return true;
+
+    return result;
 }
 
 /**
  * @brief Dequeue one event -- checks front slot first, then ring buffer
  *
- * Called only from SM_Process (single-thread context).
+ * Called only from SM_Process (single consumer). Uses a critical section so
+ * the front slot / ring bookkeeping cannot interleave with an ISR post.
  */
 static bool sm_event_dequeue(SM_Handle_t sm, SM_EventItem_t *item)
 {
     SM_EventQueue_t *q = &sm->event_queue;
+    bool result = false;
 
-    /* Check front slot first (QP/C frontEvt optimization) */
-    if (q->front_valid) {
-        *item = q->front;
-        q->front_valid = false;
-        return true;
+    SM_Platform_EnterCritical();
+    {
+        if (q->front_valid) {
+            *item = q->front;
+            q->front_valid = false;
+            result = true;
+        } else if (q->count > 0U) {
+            *item = q->items[q->tail];
+            q->tail = (uint8_t)((q->tail + 1U) % SM_EVENT_QUEUE_SIZE);
+            q->count--;
+            result = true;
+        }
     }
+    SM_Platform_ExitCritical();
 
-    /* Fall through to ring buffer */
-    if (q->count == 0U) {
-        return false;
-    }
-
-    *item = q->items[q->tail];
-    q->tail = (uint8_t)((q->tail + 1U) % SM_EVENT_QUEUE_SIZE);
-    q->count--;
-
-    return true;
+    return result;
 }
 
 /**
@@ -215,22 +225,22 @@ static const SM_Transition_t *sm_find_transition(
     return NULL;
 }
 
-#if SM_FEATURE_HSM
 /**
- * @brief Find transition with HSM parent-state fallback
+ * @brief Find a transition for (current state, event) across all tables
  *
- * If no transition in the current state, walks up the parent chain
- * (bounded by SM_HSM_MAX_DEPTH) looking for a handler.
+ * Searches the const flash table, then the runtime table (if enabled).
+ * With SM_FEATURE_HSM, walks up the parent chain (bounded by
+ * SM_HSM_MAX_DEPTH) when the current state has no handler.
  */
-static const SM_Transition_t *sm_find_transition_hsm(
+static const SM_Transition_t *sm_resolve_transition(
     SM_Handle_t sm, uint16_t from_state, uint16_t event, uint32_t data)
 {
+#if SM_FEATURE_HSM
     uint16_t state = from_state;
 
     for (uint8_t depth = 0U; depth < SM_HSM_MAX_DEPTH; depth++) {
         SM_INVARIANT(220, depth < SM_HSM_MAX_DEPTH);
 
-        /* Search const flash table */
         const SM_Transition_t *t = sm_find_transition(
             sm->config->transitions, sm->config->transition_count,
             sm, state, event, data);
@@ -239,7 +249,6 @@ static const SM_Transition_t *sm_find_transition_hsm(
         }
 
 #if SM_FEATURE_RUNTIME_TRANSITIONS
-        /* Search runtime table */
         t = sm_find_transition(
             sm->rt_transitions, sm->rt_transition_count,
             sm, state, event, data);
@@ -257,8 +266,80 @@ static const SM_Transition_t *sm_find_transition_hsm(
     }
 
     return NULL;
-}
+#else
+    const SM_Transition_t *t = sm_find_transition(
+        sm->config->transitions, sm->config->transition_count,
+        sm, from_state, event, data);
+
+#if SM_FEATURE_RUNTIME_TRANSITIONS
+    if (t == NULL) {
+        t = sm_find_transition(
+            sm->rt_transitions, sm->rt_transition_count,
+            sm, from_state, event, data);
+    }
+#endif
+
+    return t;
 #endif /* SM_FEATURE_HSM */
+}
+
+/**
+ * @brief Execute one transition atomically: exit -> action -> update -> entry
+ *
+ * The new state's on_entry runs within the same SM_Process call, so an
+ * observer polling SM_GetState never sees the new state before its entry
+ * effects have been applied (beyond the microseconds between the state
+ * write and entry-callback return).
+ *
+ * @param sm    Handle
+ * @param trans Transition to execute (to_state already range-checked)
+ * @param evt   Event that triggered the transition
+ */
+static void sm_execute_transition(SM_Handle_t sm, const SM_Transition_t *trans,
+                                  const SM_EventItem_t *evt)
+{
+    uint16_t old_state = sm->current_state;
+    uint16_t new_state = trans->to_state;
+
+    /* --- Exit old state --- */
+    const SM_StateDesc_t *old_desc = sm_get_state_desc(sm, old_state);
+    if (old_desc != NULL && old_desc->on_exit != NULL) {
+        old_desc->on_exit(sm);
+    }
+
+    /* --- Transition action (state still reads as old_state here) --- */
+    if (trans->action != NULL) {
+        trans->action(sm, evt->event, evt->data);
+    }
+
+    /* --- Update state + DIS (D7) --- */
+    sm->previous_state = old_state;
+    sm->current_state = new_state;
+    SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
+
+    /* --- Record in history --- */
+    sm_history_record(sm, new_state);
+
+    /* --- Reset per-state timing, then enter new state in this same call --- */
+    sm->state_entry_time = SM_Platform_GetTimeMs();
+    sm->state_exec_count = 0U;
+    sm->state_entered = false;
+    sm->timeout_fired = false;
+
+#if SM_FEATURE_STATISTICS
+    sm->stats.total_transitions++;
+    sm->stats.state_entry_counts[new_state]++;
+#endif
+
+    const SM_StateDesc_t *new_desc = sm_get_state_desc(sm, new_state);
+    if (new_desc != NULL && new_desc->on_entry != NULL) {
+        new_desc->on_entry(sm);
+    }
+
+    SM_LOG_INFO("SM_Process: %u -> %u (event=%u)",
+                (unsigned)old_state, (unsigned)new_state,
+                (unsigned)evt->event);
+}
 
 /* =============================================================================
  * LIFECYCLE
@@ -385,125 +466,93 @@ void SM_Process(SM_Handle_t sm)
         return;
     }
 
-    /* --- on_entry on first cycle after transition --- */
+    /* --- Deferred entry: only for the initial state after SM_Init/SM_Reset.
+     *     Event-driven transitions run their entry inline (v4.0). --- */
     if (sm->state_entered) {
-        if (state_desc != NULL && state_desc->on_entry != NULL) {
-            state_desc->on_entry(sm);
-        }
         sm->state_entered = false;
         sm->state_entry_time = SM_Platform_GetTimeMs();
         sm->state_exec_count = 0U;
         sm->timeout_fired = false;
+        if (state_desc->on_entry != NULL) {
+            state_desc->on_entry(sm);
+        }
     }
 
-    /* --- on_execute every cycle --- */
-    if (state_desc != NULL && state_desc->on_execute != NULL) {
+    /* --- on_execute once per SM_Process, for the state current at entry
+     *     to this call (transitions later in this call do NOT re-run it) --- */
+    if (state_desc->on_execute != NULL) {
         state_desc->on_execute(sm);
     }
     sm->state_exec_count++;
 
-    /* --- State timeout: fire-once internal event (D7 extension) --- */
-    if (state_desc != NULL && state_desc->timeout_ms > 0U && !sm->timeout_fired) {
+    /* --- State timeout: post public SM_EVT_TIMEOUT once per state entry.
+     *     The fired latch is only set when the post actually succeeds, so a
+     *     full queue cannot permanently swallow the timeout (v4.0). --- */
+    if (state_desc->timeout_ms > 0U && !sm->timeout_fired) {
         uint32_t elapsed = SM_Platform_GetTimeMs() - sm->state_entry_time;
         if (elapsed >= state_desc->timeout_ms) {
-            sm->timeout_fired = true;
-            (void)sm_post_internal(sm, SM_INTERNAL_TIMEOUT, 0U);
-            SM_LOG_VERBOSE("SM_Process: state %u timeout after %lu ms",
-                           (unsigned)sm->current_state, (unsigned long)elapsed);
+            if (sm_post_internal(sm, SM_EVT_TIMEOUT, 0U)) {
+                sm->timeout_fired = true;
 #if SM_FEATURE_STATISTICS
-            sm->stats.total_timeouts++;
+                sm->stats.total_timeouts++;
 #endif
-        }
-    }
-
-    /* --- Min dwell time: suppress event processing if too early --- */
-    bool dwell_ok = true;
-    if (state_desc != NULL && state_desc->min_dwell_ms > 0U) {
-        uint32_t elapsed = SM_Platform_GetTimeMs() - sm->state_entry_time;
-        if (elapsed < state_desc->min_dwell_ms) {
-            dwell_ok = false;
-        }
-    }
-
-    /* --- Dequeue and process ONE event (RTC: run-to-completion) --- */
-    if (dwell_ok) {
-        SM_EventItem_t evt;
-        if (sm_event_dequeue(sm, &evt)) {
-            const SM_Transition_t *trans = NULL;
-
-#if SM_FEATURE_HSM
-            trans = sm_find_transition_hsm(sm, sm->current_state,
-                                           evt.event, evt.data);
-#else
-            /* Search const flash table first */
-            trans = sm_find_transition(
-                sm->config->transitions, sm->config->transition_count,
-                sm, sm->current_state, evt.event, evt.data);
-
-#if SM_FEATURE_RUNTIME_TRANSITIONS
-            /* Search runtime table if no match in const table */
-            if (trans == NULL) {
-                trans = sm_find_transition(
-                    sm->rt_transitions, sm->rt_transition_count,
-                    sm, sm->current_state, evt.event, evt.data);
-            }
-#endif
-#endif /* SM_FEATURE_HSM */
-
-            if (trans != NULL) {
-                uint16_t old_state = sm->current_state;
-                uint16_t new_state = trans->to_state;
-
-                if (new_state >= SM_STATE_COUNT) {
-                    SM_LOG_WARN("SM_Process: drop transition (invalid to_state=%u)",
-                                (unsigned)new_state);
-                } else {
-
-                /* --- Exit old state --- */
-                if (state_desc != NULL && state_desc->on_exit != NULL) {
-                    state_desc->on_exit(sm);
-                }
-
-                /* --- Execute transition action --- */
-                if (trans->action != NULL) {
-                    trans->action(sm, evt.event, evt.data);
-                }
-
-                /* --- Update state + DIS (D7) --- */
-                sm->previous_state = old_state;
-                sm->current_state = new_state;
-                SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
-
-                /* --- Record in history --- */
-                sm_history_record(sm, new_state);
-
-                /* --- Prepare for new state entry on next cycle --- */
-                sm->state_entered = true;
-                sm->timeout_fired = false;
-
-                SM_LOG_INFO("SM_Process: %u -> %u (event=%u)",
-                            (unsigned)old_state, (unsigned)new_state,
-                            (unsigned)evt.event);
-
-#if SM_FEATURE_STATISTICS
-                sm->stats.total_transitions++;
-                if (new_state < SM_STATE_COUNT) {
-                    sm->stats.state_entry_counts[new_state]++;
-                }
-#endif
-                }
+                SM_LOG_VERBOSE("SM_Process: state %u timeout after %lu ms",
+                               (unsigned)sm->current_state, (unsigned long)elapsed);
             } else {
-                SM_LOG_VERBOSE("SM_Process: event=%u data=%lu -- no transition from state %u",
-                               (unsigned)evt.event, (unsigned long)evt.data,
-                               (unsigned)sm->current_state);
+                SM_LOG_WARN("SM_Process: timeout post failed (queue full), will retry");
             }
         }
     }
 
-    /* --- Tick time events (D9) --- */
+    /* --- Tick time events BEFORE the drain so a timer firing this cycle is
+     *     normally delivered this cycle (v4.0; was after, costing a cycle) --- */
 #if SM_FEATURE_TIME_EVENTS
     SM_TimeEvt_Tick_(sm);
 #endif
+
+    /* --- Drain up to SM_MAX_EVENTS_PER_PROCESS events (RTC per event).
+     *     Each iteration re-reads the current state: a transition mid-drain
+     *     means subsequent events are evaluated against the NEW state, and
+     *     the new state's min_dwell_ms gates further processing. --- */
+    for (uint16_t drained = 0U; drained < SM_MAX_EVENTS_PER_PROCESS; drained++) {
+        SM_INVARIANT(230, drained < SM_MAX_EVENTS_PER_PROCESS);
+
+        state_desc = sm_get_state_desc(sm, sm->current_state);
+        if (state_desc == NULL) {
+            break;
+        }
+
+        /* Min dwell: leave events queued until the state has aged enough */
+        if (state_desc->min_dwell_ms > 0U) {
+            uint32_t elapsed = SM_Platform_GetTimeMs() - sm->state_entry_time;
+            if (elapsed < state_desc->min_dwell_ms) {
+                break;
+            }
+        }
+
+        SM_EventItem_t evt;
+        if (!sm_event_dequeue(sm, &evt)) {
+            break;
+        }
+
+        const SM_Transition_t *trans = sm_resolve_transition(
+            sm, sm->current_state, evt.event, evt.data);
+
+        if (trans == NULL) {
+            SM_LOG_VERBOSE("SM_Process: event=%u data=%lu -- no transition from state %u",
+                           (unsigned)evt.event, (unsigned long)evt.data,
+                           (unsigned)sm->current_state);
+            continue;  /* Event consumed; keep draining */
+        }
+
+        if (trans->to_state >= SM_STATE_COUNT) {
+            SM_LOG_WARN("SM_Process: drop transition (invalid to_state=%u)",
+                        (unsigned)trans->to_state);
+            continue;
+        }
+
+        sm_execute_transition(sm, trans, &evt);
+    }
 }
 
 void SM_Reset(SM_Handle_t sm)
@@ -541,7 +590,9 @@ void SM_Reset(SM_Handle_t sm)
     /* Clear errors */
     SM_Error_Clear(sm);
 
-    /* Reset to initial state */
+    /* Reset to initial state. Entry is deferred to the next SM_Process
+     * (same as after SM_Init) so SM_Reset stays safe to call from outside
+     * the processing context. */
     sm->previous_state = sm->current_state;
     sm->current_state = sm->config->initial_state;
     SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
@@ -556,7 +607,7 @@ void SM_Reset(SM_Handle_t sm)
 }
 
 /* =============================================================================
- * EVENT POSTING (ISR-SAFE) -- with frontEvt optimization (D6)
+ * EVENT POSTING (ISR-SAFE) -- strict FIFO with frontEvt fast path (D6, v4.0)
  * ===========================================================================*/
 
 bool SM_PostEvent(SM_Handle_t sm, uint16_t event, uint32_t data)
@@ -565,50 +616,13 @@ bool SM_PostEvent(SM_Handle_t sm, uint16_t event, uint32_t data)
         return false;
     }
 
+    /* User events must be < SM_EVENT_COUNT. SM_EVT_TIMEOUT is engine-only:
+     * it is posted by the timeout mechanism, never by application code. */
     if (event >= SM_EVENT_COUNT) {
         return false;
     }
 
-    bool result = false;
-
-    SM_Platform_EnterCritical();
-    {
-        SM_EventQueue_t *q = &sm->event_queue;
-
-        /* frontEvt optimization (D6): if queue empty + front empty, use front */
-        if (!q->front_valid && q->count == 0U) {
-            q->front.event = event;
-            q->front._reserved = 0U;
-            q->front.data = data;
-            q->front_valid = true;
-            sm_queue_update_watermark(q);
-#if SM_FEATURE_STATISTICS
-            sm->stats.total_events_posted++;
-#endif
-            result = true;
-        } else if (q->count >= SM_EVENT_QUEUE_SIZE) {
-            /* Ring buffer full -- drop event */
-#if SM_FEATURE_STATISTICS
-            sm->stats.total_events_dropped++;
-#endif
-            result = false;
-        } else {
-            /* Enqueue into ring buffer */
-            q->items[q->head].event = event;
-            q->items[q->head]._reserved = 0U;
-            q->items[q->head].data = data;
-            q->head = (uint8_t)((q->head + 1U) % SM_EVENT_QUEUE_SIZE);
-            q->count++;
-            sm_queue_update_watermark(q);
-#if SM_FEATURE_STATISTICS
-            sm->stats.total_events_posted++;
-#endif
-            result = true;
-        }
-    }
-    SM_Platform_ExitCritical();
-
-    return result;
+    return sm_post_internal(sm, event, data);
 }
 
 /* =============================================================================
@@ -620,8 +634,10 @@ bool SM_EventQueueIsFull(SM_Handle_t sm)
     if (sm == NULL) {
         return true;
     }
-    /* Full when front is occupied AND ring is full */
-    return sm->event_queue.front_valid && (sm->event_queue.count >= SM_EVENT_QUEUE_SIZE);
+    /* Mirrors SM_PostEvent's accept logic exactly: a post fails iff the ring
+     * is full, regardless of the front slot (the front slot is only usable
+     * when the queue is completely empty). */
+    return sm->event_queue.count >= SM_EVENT_QUEUE_SIZE;
 }
 
 bool SM_EventQueueIsEmpty(SM_Handle_t sm)
@@ -745,9 +761,14 @@ bool SM_AddTransition(SM_Handle_t sm, const SM_Transition_t *transition)
         return false;
     }
 
+    /* Valid events: user range plus the public timeout event, so runtime
+     * transitions can handle state timeouts too (v4.0; v3.0 rejected it). */
+    bool event_ok = (transition->event < SM_EVENT_COUNT) ||
+                    (transition->event == SM_EVT_TIMEOUT);
+
     if (transition->from_state >= SM_STATE_COUNT ||
         transition->to_state >= SM_STATE_COUNT ||
-        transition->event >= SM_EVENT_COUNT) {
+        !event_ok) {
         SM_LOG_WARN("SM_AddTransition: invalid from/to/event");
         return false;
     }
@@ -796,9 +817,25 @@ void SM_ResetStats(SM_Handle_t sm)
 
 /* =============================================================================
  * TIME EVENTS (compile-time optional, D9)
+ *
+ * v4.0: deadline-based against SM_Platform_GetTimeMs().
+ *   - "deadline passed" test uses modular arithmetic: (now - deadline) with
+ *     uint32_t wrap is < 0x80000000 iff deadline <= now (within ~24.8 days),
+ *     so 32-bit tick wrap at 49.7 days is handled.
+ *   - Periodic reload advances the deadline by whole multiples of interval
+ *     (phase-preserving, drift-free). If SM_Process stalls across several
+ *     periods, the missed fires COALESCE into one event and the next
+ *     deadline lands on the original phase grid.
+ *   - One-shot timers unlink from the list on expiry, so the list holds
+ *     exactly the scheduled timers and the SM_FEATURE_MAX_TIME_EVENTS bound
+ *     in SM_TimeEvt_Arm is meaningful.
  * ===========================================================================*/
 
 #if SM_FEATURE_TIME_EVENTS
+
+/** Deadline reached iff (now - deadline) mod 2^32 is in [0, 2^31). */
+#define SM_TIMEEVT_DUE(now_, deadline_) \
+    ((uint32_t)((now_) - (deadline_)) < 0x80000000UL)
 
 void SM_TimeEvt_Init(SM_TimeEvt_t *te, SM_Handle_t sm, uint16_t sig, uint32_t data)
 {
@@ -814,48 +851,69 @@ void SM_TimeEvt_Init(SM_TimeEvt_t *te, SM_Handle_t sm, uint16_t sig, uint32_t da
     te->sig = sig;
     te->_pad = 0U;
     te->data = data;
-    te->ctr = 0U;        /* disarmed */
+    te->deadline = 0U;
     te->interval = 0U;
+    te->armed = false;
 }
 
-void SM_TimeEvt_Arm(SM_TimeEvt_t *te, uint32_t ticks, uint32_t interval)
+bool SM_TimeEvt_Arm(SM_TimeEvt_t *te, uint32_t delay_ms, uint32_t interval_ms)
 {
     SM_REQUIRE(310, te != NULL);
-    SM_REQUIRE(311, te->sm != NULL);
-    SM_REQUIRE(312, ticks > 0U);
+    SM_REQUIRE(311, (te == NULL) || (te->sm != NULL));
+    SM_REQUIRE(312, delay_ms > 0U);
+    /* Modular deadline comparison limits spans to < 2^31 ms (~24.8 days) */
+    SM_REQUIRE(314, delay_ms < 0x80000000UL && interval_ms < 0x80000000UL);
 
-    if (te == NULL || te->sm == NULL || ticks == 0U) {
-        return;
+    if (te == NULL || te->sm == NULL || delay_ms == 0U ||
+        delay_ms >= 0x80000000UL || interval_ms >= 0x80000000UL) {
+        return false;
     }
 
     SM_Handle_t sm = te->sm;
+    uint32_t now = SM_Platform_GetTimeMs();
+    bool result = true;
 
     SM_Platform_EnterCritical();
     {
-        te->ctr = ticks;
-        te->interval = interval;
-
-        /* Insert at head of the linked list if not already in list */
-        /* Check if already present to avoid re-insertion */
+        /* Scan for the node while counting list length. The list can never
+         * exceed SM_FEATURE_MAX_TIME_EVENTS (enforced here), so the scan
+         * bound doubles as a corruption guard. */
         bool found = false;
+        uint16_t len = 0U;
         SM_TimeEvt_t *cur = sm->time_evt_head;
-        uint16_t guard = 0U;
-        while (cur != NULL && guard < SM_FEATURE_MAX_TIME_EVENTS) {
+        while (cur != NULL && len < SM_FEATURE_MAX_TIME_EVENTS) {
             if (cur == te) {
                 found = true;
-                break;
             }
             cur = cur->next;
-            guard++;
+            len++;
         }
-        SM_INVARIANT(313, guard <= SM_FEATURE_MAX_TIME_EVENTS);
+        SM_INVARIANT(313, len <= SM_FEATURE_MAX_TIME_EVENTS);
 
-        if (!found) {
-            te->next = sm->time_evt_head;
-            sm->time_evt_head = te;
+        if (!found && len >= SM_FEATURE_MAX_TIME_EVENTS) {
+            /* Capacity exhausted -- reject rather than silently never firing
+             * (v3.0 allowed over-insertion; timers past the bound never
+             * ticked and re-arming them could corrupt the list). */
+            result = false;
+        } else {
+            te->deadline = now + delay_ms;
+            te->interval = interval_ms;
+            te->armed = true;
+
+            if (!found) {
+                te->next = sm->time_evt_head;
+                sm->time_evt_head = te;
+            }
         }
     }
     SM_Platform_ExitCritical();
+
+    if (!result) {
+        SM_LOG_WARN("SM_TimeEvt_Arm: capacity reached (%u timers)",
+                    (unsigned)SM_FEATURE_MAX_TIME_EVENTS);
+    }
+
+    return result;
 }
 
 bool SM_TimeEvt_Disarm(SM_TimeEvt_t *te)
@@ -871,8 +929,9 @@ bool SM_TimeEvt_Disarm(SM_TimeEvt_t *te)
 
     SM_Platform_EnterCritical();
     {
-        was_armed = (te->ctr > 0U);
-        te->ctr = 0U;
+        was_armed = te->armed;
+        te->armed = false;
+        te->deadline = 0U;
         te->interval = 0U;
 
         /* Remove from linked list */
@@ -906,45 +965,80 @@ void SM_TimeEvt_Tick_(SM_Handle_t sm)
         return;
     }
 
-    /*
-     * Same critical-section discipline as SM_TimeEvt_Arm / Disarm so list and
-     * ctr fields cannot race ISR-side arm/disarm while the tick runs.
-     */
+    uint32_t now = SM_Platform_GetTimeMs();
+
+    /* Phase 1 (short critical section): walk the list, decide which timers
+     * fire, update deadlines, unlink expired one-shots. Collected fires are
+     * posted in phase 2 OUTSIDE the critical section, so interrupts are
+     * only masked for the list walk, not for queue insertions + logging
+     * (v3.0 held one critical section across all of it).
+     *
+     * Race note: a Disarm racing between phase 1 and phase 2 cannot recall
+     * an already-collected fire -- the event may still be delivered once.
+     * This matches the documented QP/C time-event contract. */
+    struct {
+        uint16_t sig;
+        uint32_t data;
+    } fired[SM_FEATURE_MAX_TIME_EVENTS];
+    uint8_t n_fired = 0U;
+
     SM_Platform_EnterCritical();
     {
+        SM_TimeEvt_t *prev = NULL;
         SM_TimeEvt_t *te = sm->time_evt_head;
-        uint16_t tick_count = 0U;
+        uint16_t walk = 0U;
 
-        while (te != NULL && tick_count < SM_FEATURE_MAX_TIME_EVENTS) {
-            SM_INVARIANT(330, tick_count < SM_FEATURE_MAX_TIME_EVENTS);
+        while (te != NULL && walk < SM_FEATURE_MAX_TIME_EVENTS) {
+            SM_INVARIANT(330, walk < SM_FEATURE_MAX_TIME_EVENTS);
 
-            SM_TimeEvt_t *next = te->next;  /* cache next before potential removal */
+            SM_TimeEvt_t *next = te->next;
 
-            if (te->ctr > 0U) {
-                te->ctr--;
+            if (te->armed && SM_TIMEEVT_DUE(now, te->deadline)) {
+                fired[n_fired].sig = te->sig;
+                fired[n_fired].data = te->data;
+                n_fired++;
 
-                /* Matches sm_types.h: countdown posts when ctr hits 0 after tick */
-                if (te->ctr == 0U) {
-                    /* Post the event (nested critical sections are ok) */
-                    (void)sm_post_internal(sm, te->sig, te->data);
-
-                    SM_LOG_VERBOSE("TimeEvt: sig=%u fired", (unsigned)te->sig);
-
-                    if (te->interval > 0U) {
-                        /* Periodic: reload */
-                        te->ctr = te->interval;
+                if (te->interval > 0U) {
+                    /* Periodic: advance by whole intervals past now
+                     * (drift-free, phase-preserving; missed periods
+                     * coalesce into this single fire). */
+                    uint32_t late = now - te->deadline;
+                    uint32_t periods = (late / te->interval) + 1U;
+                    te->deadline += periods * te->interval;
+                    prev = te;
+                } else {
+                    /* One-shot: disarm and unlink so the list length
+                     * reflects scheduled timers only. */
+                    te->armed = false;
+                    if (prev != NULL) {
+                        prev->next = next;
                     } else {
-                        /* One-shot: leave disarmed (ctr == 0) but keep in list
-                         * so user can re-arm without re-inserting. */
+                        sm->time_evt_head = next;
                     }
+                    te->next = NULL;
                 }
+            } else {
+                prev = te;
             }
 
             te = next;
-            tick_count++;
+            walk++;
         }
     }
     SM_Platform_ExitCritical();
+
+    /* Phase 2: post collected fires in list order (each post takes its own
+     * short critical section). Delivery order among same-tick fires follows
+     * list order, as in v3.0. */
+    for (uint8_t i = 0U; i < n_fired; i++) {
+        SM_INVARIANT(331, i < SM_FEATURE_MAX_TIME_EVENTS);
+        if (!sm_post_internal(sm, fired[i].sig, fired[i].data)) {
+            SM_LOG_WARN("TimeEvt: sig=%u dropped (queue full)",
+                        (unsigned)fired[i].sig);
+        } else {
+            SM_LOG_VERBOSE("TimeEvt: sig=%u fired", (unsigned)fired[i].sig);
+        }
+    }
 }
 
 #endif /* SM_FEATURE_TIME_EVENTS */
@@ -996,37 +1090,49 @@ bool SM_RecallEvent(SM_Handle_t sm)
         return false;
     }
 
-    /* Pop from defer queue (FIFO dequeue from tail) */
+    /* Peek the oldest deferred event (FIFO among deferred events). The
+     * defer-queue slot is only released after the insert succeeds, so a
+     * full main queue leaves the event safely deferred (v4.0; v3.0 lost
+     * the event on this path). */
     SM_EventItem_t item = dq->items[dq->tail];
-    dq->tail = (uint8_t)((dq->tail + 1U) % SM_DEFER_QUEUE_SIZE);
-    dq->count--;
 
-    /* Post to front of main queue (LIFO recall -- place at front) */
     SM_EventQueue_t *mq = &sm->event_queue;
+    bool inserted = false;
 
     SM_Platform_EnterCritical();
     {
         if (!mq->front_valid) {
-            /* Front slot is free -- use it */
+            /* Front slot free -- recalled event becomes the next event */
             mq->front = item;
             mq->front_valid = true;
-        } else {
-            /* Front is occupied -- push into ring buffer if room */
-            if (mq->count < SM_EVENT_QUEUE_SIZE) {
-                mq->items[mq->head] = item;
-                mq->head = (uint8_t)((mq->head + 1U) % SM_EVENT_QUEUE_SIZE);
-                mq->count++;
-            } else {
-                SM_Platform_ExitCritical();
-                SM_LOG_WARN("SM_RecallEvent: main queue full, event lost");
-#if SM_FEATURE_STATISTICS
-                sm->stats.total_events_dropped++;
-#endif
-                return false;
-            }
+            inserted = true;
+        } else if (mq->count < SM_EVENT_QUEUE_SIZE) {
+            /* True front insertion (QP/C postLIFO semantics): displace the
+             * current front into the ring's tail-1 slot so it is dequeued
+             * immediately after the recalled event, ahead of the backlog.
+             * (v3.0 appended to the BACK of the ring here, contradicting
+             * the documented recall-to-front contract.) */
+            mq->tail = (uint8_t)((mq->tail + SM_EVENT_QUEUE_SIZE - 1U) % SM_EVENT_QUEUE_SIZE);
+            mq->items[mq->tail] = mq->front;
+            mq->count++;
+            mq->front = item;
+            inserted = true;
+        }
+
+        if (inserted) {
+            sm_queue_update_watermark(mq);
         }
     }
     SM_Platform_ExitCritical();
+
+    if (!inserted) {
+        SM_LOG_WARN("SM_RecallEvent: main queue full, event stays deferred");
+        return false;
+    }
+
+    /* Commit: release the defer-queue slot */
+    dq->tail = (uint8_t)((dq->tail + 1U) % SM_DEFER_QUEUE_SIZE);
+    dq->count--;
 
     SM_LOG_VERBOSE("SM_RecallEvent: event=%u recalled to front",
                    (unsigned)item.event);

@@ -21,10 +21,10 @@ extern "C" {
  * FRAMEWORK VERSION
  * ===========================================================================*/
 
-#define SM_FRAMEWORK_VERSION_MAJOR  (3)
+#define SM_FRAMEWORK_VERSION_MAJOR  (4)
 #define SM_FRAMEWORK_VERSION_MINOR  (0)
 #define SM_FRAMEWORK_VERSION_PATCH  (0)
-#define SM_FRAMEWORK_VERSION_STRING "3.0.0"
+#define SM_FRAMEWORK_VERSION_STRING "4.0.0"
 
 /* =============================================================================
  * FRAMEWORK HEADERS (order matters)

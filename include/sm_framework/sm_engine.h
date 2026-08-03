@@ -43,9 +43,20 @@ bool SM_Init(SM_Handle_t sm, const SM_Config_t *config);
 /**
  * @brief Process one iteration of the state machine
  *
- * Dequeues one event, evaluates transitions, executes state callbacks,
- * ticks time events, and advances RTC processing. Intended to run from the
- * main/task context on a periodic schedule (e.g. SM_TASK_PERIOD_MS).
+ * Per call (v4.0 order):
+ *   1. Deferred on_entry for the initial state (after SM_Init / SM_Reset only)
+ *   2. on_execute for the current state (exactly once per call)
+ *   3. State timeout check -- posts SM_EVT_TIMEOUT once per state entry
+ *      (retried next call if the queue was full)
+ *   4. Time event tick (deadline-based, ms) -- fires post into the queue
+ *   5. Event drain: up to SM_MAX_EVENTS_PER_PROCESS events, each with full
+ *      run-to-completion semantics. A transition executes
+ *      exit -> action -> state update -> entry ATOMICALLY within this call;
+ *      subsequent drained events are evaluated against the new state, and
+ *      the new state's min_dwell_ms gates further processing.
+ *
+ * Intended to run from the main/task context on a periodic schedule
+ * (e.g. SM_TASK_PERIOD_MS).
  *
  * @param sm Handle to the state machine instance
  *
@@ -57,6 +68,9 @@ bool SM_Init(SM_Handle_t sm, const SM_Config_t *config);
  * @note If a matching transition has \a to_state >= SM_STATE_COUNT, the event
  *       is consumed and the machine stays in the current state (runtime warn
  *       when debug is enabled).
+ * @note An event posted from a callback during the drain may be processed
+ *       later in the same call if the drain budget allows -- this is
+ *       intentional RTC chaining, bounded by SM_MAX_EVENTS_PER_PROCESS.
  */
 void SM_Process(SM_Handle_t sm);
 
@@ -79,13 +93,13 @@ void SM_Reset(SM_Handle_t sm);
 /**
  * @brief Post an event to the state machine's event queue
  *
- * ISR-SAFE: Uses critical sections. Can be called from interrupts among
- * user-defined events with IDs `< SM_EVENT_COUNT`.
- * Events delivered to SM_Process() are FIFO for user posts when using the fast
- * front-slot path (empty queue + empty front). Once the ring holds events,
- * ordering remains FIFO for user traffic. Framework-internal posts (timeouts,
- * deferred recall) may use the front slot under looser rules — see implementation
- * notes in sm_engine.c (`sm_post_internal`).
+ * ISR-SAFE: Uses critical sections. Accepts user-defined events with IDs
+ * `< SM_EVENT_COUNT`; SM_EVT_TIMEOUT is rejected (engine-only signal).
+ *
+ * Delivery is strict FIFO in post order for ALL sources -- user, ISR,
+ * internal timeout, and time events share one ordering rule (v4.0; v3.0
+ * let internal posts jump queued backlog via the front slot). The only
+ * deliberate exception is SM_RecallEvent, which inserts at the true front.
  *
  * @param sm    Handle to the state machine instance
  * @param event User-defined event ID
@@ -102,6 +116,12 @@ bool SM_PostEvent(SM_Handle_t sm, uint16_t event, uint32_t data);
 
 /**
  * @brief Check if the event queue is full
+ *
+ * Mirrors SM_PostEvent's accept logic exactly: full iff the ring is full
+ * (the front slot only counts as capacity when the queue is completely
+ * empty, so effective capacity is SM_EVENT_QUEUE_SIZE, +1 transiently via
+ * the empty-queue fast path). v4.0 fix: v3.0 could report not-full while a
+ * post would in fact be dropped.
  *
  * @param sm Handle to the state machine instance
  * @return true if queue is full (SM_PostEvent would fail)
@@ -218,6 +238,9 @@ bool SM_GetStateHistory(SM_Handle_t sm, uint16_t *buf, uint8_t buf_len, uint8_t 
  * Appends a transition to the runtime transition table. These are checked
  * AFTER the const flash table during event processing.
  *
+ * Valid events are the user range (`< SM_EVENT_COUNT`) plus SM_EVT_TIMEOUT,
+ * so runtime transitions can handle state timeouts (v4.0; v3.0 rejected it).
+ *
  * @param sm         Handle to the state machine instance
  * @param transition Pointer to transition definition to add
  * @return true if added, false if table full or invalid parameters
@@ -274,37 +297,51 @@ void SM_ResetStats(SM_Handle_t sm);
 void SM_TimeEvt_Init(SM_TimeEvt_t *te, SM_Handle_t sm, uint16_t sig, uint32_t data);
 
 /**
- * @brief Arm (start) a time event
+ * @brief Arm (start) a time event -- millisecond deadline (v4.0)
  *
  * ISR-SAFE: uses critical sections.
- * Inserts the time event into the instance's linked list.
+ * Schedules the timer to fire when SM_Platform_GetTimeMs() reaches
+ * now + delay_ms, checked once per SM_Process() call (so the effective
+ * resolution is the SM_Process period, but a late check fires immediately
+ * rather than stretching with call cadence). Re-arming an already-scheduled
+ * timer updates its deadline in place (no duplicate list entry).
  *
- * @param te        Pointer to an initialized SM_TimeEvt_t
- * @param ticks     Initial countdown; decremented once per SM_TimeEvt_Tick_
- *                  call (invoked from SM_Process). Must be > 0. Event posts
- *                  when the counter reaches 0 after a tick.
- * @param interval  Auto-reload countdown after each fire (0 = one-shot until
- *                  disarmed or re-armed)
+ * @param te          Pointer to an initialized SM_TimeEvt_t
+ * @param delay_ms    Milliseconds until first fire. Must be > 0 and < 2^31.
+ * @param interval_ms Reload period in ms for periodic firing (0 = one-shot).
+ *                    Must be < 2^31. Periodic deadlines advance by whole
+ *                    intervals: drift-free, and periods missed during a
+ *                    stall coalesce into a single event.
+ * @return true if armed; false on invalid parameters or when
+ *         SM_FEATURE_MAX_TIME_EVENTS timers are already scheduled on this
+ *         instance (v4.0: capacity is enforced here instead of timers
+ *         silently never firing).
  */
-void SM_TimeEvt_Arm(SM_TimeEvt_t *te, uint32_t ticks, uint32_t interval);
+bool SM_TimeEvt_Arm(SM_TimeEvt_t *te, uint32_t delay_ms, uint32_t interval_ms);
 
 /**
  * @brief Disarm (stop) a time event
  *
  * ISR-SAFE: uses critical sections.
- * Removes the time event from the linked list if it was armed.
+ * Removes the time event from the linked list if it was scheduled.
  *
  * @param te  Pointer to the time event to disarm
  * @return true if the event was armed and has been disarmed,
  *         false if it was already disarmed
+ *
+ * @note A disarm can race a fire already collected by SM_TimeEvt_Tick_ in
+ *       the same cycle: the event may still be delivered once. If the state
+ *       no longer handles it, it is discarded (standard time-event contract).
  */
 bool SM_TimeEvt_Disarm(SM_TimeEvt_t *te);
 
 /**
  * @brief Tick all time events for a state machine instance (internal)
  *
- * Called from SM_Process. Walks the linked list, decrements counters,
- * posts events on expiry. Hard-bounded by SM_FEATURE_MAX_TIME_EVENTS.
+ * Called from SM_Process BEFORE the event drain, so a timer firing this
+ * cycle is normally delivered this cycle. Two-phase: the list walk runs in
+ * a short critical section; collected fires are posted outside it, keeping
+ * interrupt-masked time small and bounded.
  *
  * @param sm Handle to the state machine instance
  *
@@ -323,9 +360,9 @@ void SM_TimeEvt_Tick_(SM_Handle_t sm);
 /**
  * @brief Defer an event for later processing
  *
- * Places the event into the deferred queue. The deferred event will be
- * recalled (re-posted to the front of the main queue) when SM_RecallEvent
- * is called, typically on state entry.
+ * Places the event into the deferred queue (FIFO). Deferred events are
+ * recalled one at a time -- oldest first -- via SM_RecallEvent, typically
+ * on state entry.
  *
  * NOT ISR-safe -- call only from state callbacks or SM_Process context.
  *
@@ -337,16 +374,21 @@ void SM_TimeEvt_Tick_(SM_Handle_t sm);
 bool SM_DeferEvent(SM_Handle_t sm, uint16_t event, uint32_t data);
 
 /**
- * @brief Recall one deferred event to the front of the main queue
+ * @brief Recall one deferred event to the true front of the main queue
  *
- * Pops the most recently deferred event and posts it to the front slot
- * of the main event queue (LIFO recall). If the front slot is occupied,
- * the recalled event is placed into the ring buffer at the head.
+ * Pops the OLDEST deferred event (FIFO among deferred events) and inserts
+ * it at the front of the main queue so it is the next event processed,
+ * ahead of any queued backlog. If the front slot is occupied, the current
+ * front is displaced into the ring immediately behind the recalled event
+ * (QP/C postLIFO semantics). v4.0 fixes two v3.0 defects here: the "front"
+ * insert actually appended to the BACK when the front slot was occupied,
+ * and a full main queue LOST the event -- it now stays safely deferred.
  *
  * NOT ISR-safe -- call only from state callbacks or SM_Process context.
  *
  * @param sm Handle to the state machine instance
- * @return true if an event was recalled, false if defer queue empty
+ * @return true if an event was recalled, false if the defer queue is empty
+ *         or the main queue is full (event remains deferred)
  */
 bool SM_RecallEvent(SM_Handle_t sm);
 

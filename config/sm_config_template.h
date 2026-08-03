@@ -51,6 +51,10 @@
 
 /* #define SM_EVENT_QUEUE_SIZE     (8U)  */  /* Default: 8 events */
 
+/* Max events drained per SM_Process call (v4.0). Default: SM_EVENT_QUEUE_SIZE.
+ * Set to 1 for the v3.0 one-event-per-call cadence. */
+/* #define SM_MAX_EVENTS_PER_PROCESS (SM_EVENT_QUEUE_SIZE) */
+
 /* =============================================================================
  * TRANSITION TABLE (optional overrides)
  * ===========================================================================*/

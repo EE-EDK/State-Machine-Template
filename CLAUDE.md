@@ -1,7 +1,7 @@
 # CLAUDE.md — State Machine Framework
 
 ## Project Summary
-Production-grade, modular state machine framework for embedded C systems. Handle-based, multi-instance, state-agnostic, zero-heap, ISR-safe. Platform-agnostic with weak-symbol HAL abstraction. Version 3.0.0, v3 rewrite complete (all 8 phases done).
+Production-grade, modular state machine framework for embedded C systems. Handle-based, multi-instance, state-agnostic, zero-heap, ISR-safe. Platform-agnostic with weak-symbol HAL abstraction. Version 4.0.0 — the v4 semantic-correction release (strict-FIFO delivery, atomic transitions, bounded event drain, ms deadline-based timers) on top of the completed v3 rewrite.
 
 ## Directory Structure
 ```
@@ -79,14 +79,17 @@ add_subdirectory(path/to/state-machine-template)
 target_link_libraries(your_target sm_framework)
 ```
 
-## Key Architecture (v3.0)
-- **State-agnostic:** User defines all states/events via enums + SM_STATE_COUNT/SM_EVENT_COUNT
+## Key Architecture (v4.0)
+- **State-agnostic:** User defines all states/events via enums + SM_STATE_COUNT/SM_EVENT_COUNT (1..65534; SM_EVT_TIMEOUT occupies SM_EVENT_COUNT)
 - **Handle-based:** SM_Handle_t = SM_Context_t*, no extern globals, multi-instance
-- **ISR-safe event queue:** Ring buffer with frontEvt optimization (QP/C pattern), configurable depth
+- **ISR-safe event queue:** Strict FIFO in post order for ALL sources (user/ISR/timeout/timer); frontEvt slot is a fast path used only when the queue is completely empty (QP/C D6 revised); SM_EventQueueIsFull mirrors SM_PostEvent exactly
 - **Const flash transitions:** SM_Transition_t[] in ROM with guard conditions + actions
+- **Atomic transitions:** exit → action → state update → entry within one SM_Process call; deferred entry only for the initial state after SM_Init/SM_Reset
+- **Bounded drain:** SM_Process handles up to SM_MAX_EVENTS_PER_PROCESS events per call (default = SM_EVENT_QUEUE_SIZE); min_dwell re-checked per event against the then-current state
 - **3-tier errors:** MINOR (auto-recover), NORMAL (managed recovery), CRITICAL (system lock with DIS)
-- **Time events:** Intrusive linked-list, arm/disarm, one-shot/periodic (SM_FEATURE_TIME_EVENTS)
-- **Deferred events:** Defer/recall with LIFO recall to front (SM_FEATURE_DEFER)
+- **Time events:** ms deadline-based against SM_Platform_GetTimeMs (wrap-safe, < 2^31 ms), drift-free periodic with coalescing on stall, capacity enforced at Arm (returns bool), ticked BEFORE the drain so fires deliver same-cycle (SM_FEATURE_TIME_EVENTS)
+- **State timeout:** public SM_EVT_TIMEOUT event; latch set only on successful post (full queue retries next cycle); valid in SM_AddTransition
+- **Deferred events:** FIFO recall (oldest first) to the TRUE front of the main queue (displaces occupied front QP-postLIFO-style); on full main queue the event stays deferred (SM_FEATURE_DEFER)
 - **Safety:** DIS verification on state + critical_lock, hard-bounded loops, numeric assertion IDs (SM_DEFINE_MODULE + SM_REQUIRE)
 - **Debug:** Per-module tags (16 max), runtime level enable/disable, compile-time stripping
 - **HAL:** Weak-symbol overrides for timing, critsec, watchdog, sleep, NVS, reset reason, capabilities
@@ -133,7 +136,9 @@ All phases complete. Maintenance items only:
 
 ## Session Continuity
 
-**Last session:** `e3e00e41` (full: see `.claude/projects/` for transcript JSONL)
+**Last session:** v4.0.0 semantic release (this session's commits)
+
+**2026-08-03 — v4.0.0 semantic correction release:** Engine execution semantics fixed after deep review. (1) Time events rewritten from SM_Process-call counting to ms deadlines (wrap-safe, drift-free periodic with stall coalescing; Arm returns bool + enforces SM_FEATURE_MAX_TIME_EVENTS; expired one-shots unlink; two-phase tick keeps critsec short). (2) SM_Process drains up to SM_MAX_EVENTS_PER_PROCESS events per call. (3) Transitions atomic (exit→action→entry same call). (4) Strict FIFO for internal posts (no timeout queue-jumping). (5) SM_EVT_TIMEOUT public, accepted by SM_AddTransition, timeout latch only on successful post. (6) SM_EventQueueIsFull matches SM_PostEvent. (7) SM_RecallEvent true front-insert, event preserved on full queue; recall is FIFO (docs previously claimed LIFO — code always was FIFO). Tests: 19 suites green, timer suite rewritten (15 cases incl. call-count-independence, coalescing, capacity). Blinky now advances SimTick (it silently relied on tick-counted timers). MIGRATION.md has the v3→v4 section.
 
 **2026-04-27 — Deep review + documentation pass (commits `264a623+`):** Bounded-loop macro end condition (`var <= bound`); `SM_Process` returns if state descriptor missing, skips transition if `to_state` out of range (warn); headers document internal event priority vs user FIFO, queue query TOCTOU, `SM_AddTransition` context, global debug state, boot `timestamp==0` for errors; `docs_dev/findings.md` banner clarifies legacy audit vs v3; README/Quick-Guide integration notes added.
 

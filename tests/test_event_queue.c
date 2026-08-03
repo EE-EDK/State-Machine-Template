@@ -351,10 +351,12 @@ void test_process_dequeues_front_then_fifo(void)
 
     TEST_ASSERT_EQUAL_UINT8(3U, SM_EventQueueDepth(s_sm));
 
-    /* --- Step 4: process all 3 events (one per SM_Process call) --- */
-    SM_Process(s_sm);   /* dequeues front (data=100) */
-    SM_Process(s_sm);   /* dequeues ring[0] (data=200) */
-    SM_Process(s_sm);   /* dequeues ring[1] (data=300) */
+    /* --- Step 4: process all 3 events. v4.0 drains up to
+     * SM_MAX_EVENTS_PER_PROCESS per call, so the first call handles all
+     * three; the extra calls verify nothing spurious follows. --- */
+    SM_Process(s_sm);
+    SM_Process(s_sm);
+    SM_Process(s_sm);
 
     /* --- Step 5: verify delivery order --- */
     TEST_ASSERT_EQUAL_UINT8(3U, s_record_count);

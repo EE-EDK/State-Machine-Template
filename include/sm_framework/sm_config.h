@@ -59,6 +59,21 @@
 #define SM_EVENT_QUEUE_SIZE          (8U)
 #endif
 
+/**
+ * @brief Maximum events processed per SM_Process() call (v4.0)
+ *
+ * SM_Process drains up to this many queued events per call, each with full
+ * run-to-completion semantics (a transition mid-drain means later events are
+ * evaluated against the new state). Bounds worst-case SM_Process execution
+ * time: WCET ~= SM_MAX_EVENTS_PER_PROCESS * (slowest transition path).
+ *
+ * Default = SM_EVENT_QUEUE_SIZE so a full backlog normally clears in one
+ * call. Set to 1 to restore the v3.0 one-event-per-call cadence.
+ */
+#ifndef SM_MAX_EVENTS_PER_PROCESS
+#define SM_MAX_EVENTS_PER_PROCESS    (SM_EVENT_QUEUE_SIZE)
+#endif
+
 /* =============================================================================
  * TRANSITION TABLE CONFIGURATION
  * ===========================================================================*/
@@ -203,10 +218,15 @@
 #endif
 
 /**
- * @brief Maximum number of time events per instance
+ * @brief Maximum number of concurrently scheduled time events per instance
  *
- * Used as the hard bound when ticking the time event list in SM_Process().
- * Prevents runaway iteration on a corrupted list.
+ * v4.0: enforced at SM_TimeEvt_Arm time -- arming beyond this returns false
+ * (v3.0 silently accepted timers that then never fired). Also the hard bound
+ * when ticking the list in SM_Process(), guarding a corrupted list.
+ *
+ * Stack note: SM_TimeEvt_Tick_ collects fires into a stack array of
+ * 8 * SM_FEATURE_MAX_TIME_EVENTS bytes (128 B at the default 16) so events
+ * are posted OUTSIDE the list-walk critical section.
  */
 #ifndef SM_FEATURE_MAX_TIME_EVENTS
 #define SM_FEATURE_MAX_TIME_EVENTS   (16U)

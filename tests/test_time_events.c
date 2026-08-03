@@ -1,24 +1,30 @@
 /**
  * @file test_time_events.c
- * @brief Unity tests for the time event subsystem (QP/C-inspired linked-list
- *        timers, D9)
+ * @brief Unity tests for the time event subsystem (deadline-based ms timers,
+ *        D9 revised in v4.0)
  *
  * Covers:
- *   1.  SM_TimeEvt_Init field setup
- *   2.  SM_TimeEvt_Arm one-shot (ctr, interval)
- *   3.  SM_TimeEvt_Arm periodic (ctr, interval)
+ *   1.  SM_TimeEvt_Init field setup (armed=false, deadline/interval zeroed)
+ *   2.  SM_TimeEvt_Arm one-shot (armed, deadline = now + delay)
+ *   3.  SM_TimeEvt_Arm periodic (interval stored)
  *   4.  Disarm armed timer returns true
  *   5.  Disarm already-disarmed timer returns false
- *   6.  One-shot fires after exactly N ticks
- *   7.  Periodic fires every interval ticks
+ *   6.  One-shot fires at its ms deadline, delivered same SM_Process call
+ *   7.  Periodic fires every interval ms, drift-free
  *   8.  Multiple time events on same SM instance
  *   9.  Disarm mid-countdown prevents firing
  *  10.  Arm after disarm (re-arm)
  *  11.  Time event posts correct sig and data payload
+ *  12.  Firing depends on elapsed TIME, not SM_Process call count (the v3.0
+ *       defect: timers stretched when SM_Process calls were missed)
+ *  13.  Stalled periodic timer coalesces missed periods into ONE event and
+ *       stays phase-aligned
+ *  14.  Arm fails when SM_FEATURE_MAX_TIME_EVENTS timers already scheduled
+ *  15.  Re-arming a scheduled timer updates deadline without duplicating it
  *
- * Time events are ticked internally by SM_Process via SM_TimeEvt_Tick_().
- * SM_Platform_SimTick() advances the platform clock so SM_Process can
- * track state timing.
+ * Timers are ticked by SM_Process via SM_TimeEvt_Tick_(), which runs BEFORE
+ * the event drain: a timer that fires in a cycle is delivered in that same
+ * cycle. SM_Platform_SimTick() advances the platform clock by 1 ms.
  */
 
 #include "unity.h"
@@ -137,12 +143,11 @@ static void init_and_go_running(void)
     memset(&ctx, 0, sizeof(ctx));
     TEST_ASSERT_TRUE(SM_Init(&ctx, &test_config));
 
-    /* Post START and run enough cycles to enter RUNNING */
+    /* Post START; the transition (and on_entry of RUNNING) completes within
+     * one SM_Process call (v4.0 atomic transitions). */
     SM_PostEvent(&ctx, TEST_EVT_START, 0U);
     SM_Platform_SimTick();
-    SM_Process(&ctx);           /* dequeues START, transitions to RUNNING */
-    SM_Platform_SimTick();
-    SM_Process(&ctx);           /* runs on_entry for RUNNING */
+    SM_Process(&ctx);
 
     TEST_ASSERT_EQUAL_UINT16(TEST_STATE_RUNNING, SM_GetState(&ctx));
 
@@ -152,7 +157,7 @@ static void init_and_go_running(void)
 }
 
 /**
- * @brief Tick the engine N times (SimTick + Process each iteration).
+ * @brief Tick the engine N times (SimTick 1ms + Process each iteration).
  */
 static void tick_n(uint32_t n)
 {
@@ -198,23 +203,27 @@ static void test_init_sets_fields(void)
     TEST_ASSERT_EQUAL_PTR(&ctx, te.sm);
     TEST_ASSERT_EQUAL_UINT16(TEST_EVT_TIMEOUT, te.sig);
     TEST_ASSERT_EQUAL_UINT32(42U, te.data);
-    TEST_ASSERT_EQUAL_UINT32(0U, te.ctr);
+    TEST_ASSERT_FALSE(te.armed);
+    TEST_ASSERT_EQUAL_UINT32(0U, te.deadline);
     TEST_ASSERT_EQUAL_UINT32(0U, te.interval);
     TEST_ASSERT_NULL(te.next);
 }
 
 /**
- * 2. SM_TimeEvt_Arm one-shot: ctr = ticks, interval = 0.
+ * 2. SM_TimeEvt_Arm one-shot: armed, deadline = now + delay, interval = 0.
  */
 static void test_arm_oneshot(void)
 {
     SM_TimeEvt_t te;
     init_and_go_running();
 
-    SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 0U);
-    SM_TimeEvt_Arm(&te, 10U, 0U);
+    uint32_t now = SM_Platform_GetTimeMs();
 
-    TEST_ASSERT_EQUAL_UINT32(10U, te.ctr);
+    SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 0U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 10U, 0U));
+
+    TEST_ASSERT_TRUE(te.armed);
+    TEST_ASSERT_EQUAL_UINT32(now + 10U, te.deadline);
     TEST_ASSERT_EQUAL_UINT32(0U, te.interval);
 
     /* Clean up */
@@ -222,17 +231,20 @@ static void test_arm_oneshot(void)
 }
 
 /**
- * 3. SM_TimeEvt_Arm periodic: ctr = ticks, interval = reload.
+ * 3. SM_TimeEvt_Arm periodic: interval stored.
  */
 static void test_arm_periodic(void)
 {
     SM_TimeEvt_t te;
     init_and_go_running();
 
-    SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 0U);
-    SM_TimeEvt_Arm(&te, 5U, 5U);
+    uint32_t now = SM_Platform_GetTimeMs();
 
-    TEST_ASSERT_EQUAL_UINT32(5U, te.ctr);
+    SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 0U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 5U, 5U));
+
+    TEST_ASSERT_TRUE(te.armed);
+    TEST_ASSERT_EQUAL_UINT32(now + 5U, te.deadline);
     TEST_ASSERT_EQUAL_UINT32(5U, te.interval);
 
     SM_TimeEvt_Disarm(&te);
@@ -247,7 +259,7 @@ static void test_disarm_armed_returns_true(void)
     init_and_go_running();
 
     SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 0U);
-    SM_TimeEvt_Arm(&te, 10U, 0U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 10U, 0U));
 
     bool was_armed = SM_TimeEvt_Disarm(&te);
     TEST_ASSERT_TRUE(was_armed);
@@ -263,8 +275,7 @@ static void test_disarm_already_disarmed_returns_false(void)
 
     SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 0U);
 
-    /* te was never armed (ctr == 0 from Init) */
-    SM_TimeEvt_Arm(&te, 10U, 0U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 10U, 0U));
     SM_TimeEvt_Disarm(&te);  /* first disarm -- was armed */
 
     bool was_armed = SM_TimeEvt_Disarm(&te);
@@ -272,38 +283,28 @@ static void test_disarm_already_disarmed_returns_false(void)
 }
 
 /**
- * 6. One-shot fires after exactly N ticks of SM_Process.
+ * 6. One-shot fires at its ms deadline; delivery in the SAME SM_Process call.
  *
- * Arm with ticks=5.  ctr goes 5->4->3->2->1->0 (fires on the 5th tick).
- * Verify:
- *   - No event after 4 ticks
- *   - Event posted on 5th tick
- *   - Timer disarmed (ctr == 0) after firing
- *   - No further events on subsequent ticks
+ * Arm with delay_ms=5 at t=T. The deadline passes at T+5, so the 5th
+ * tick (SimTick to T+5, then SM_Process) both fires AND delivers the event
+ * (SM_TimeEvt_Tick_ runs before the drain in v4.0).
  */
-static void test_oneshot_fires_at_exact_tick(void)
+static void test_oneshot_fires_at_exact_ms(void)
 {
     SM_TimeEvt_t te;
     init_and_go_running();
 
     SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 99U);
-    SM_TimeEvt_Arm(&te, 5U, 0U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 5U, 0U));
 
-    /* 4 ticks -- should NOT fire yet */
+    /* 4 ticks -- deadline not reached (t = T+4 < T+5) */
     tick_n(4);
     TEST_ASSERT_EQUAL_UINT32(0U, fire_count);
-    TEST_ASSERT_EQUAL_UINT32(1U, te.ctr);  /* one tick remaining */
+    TEST_ASSERT_TRUE(te.armed);
 
-    /* 5th tick -- should fire */
+    /* 5th tick -- fires AND delivers in the same SM_Process call */
     tick_n(1);
-    TEST_ASSERT_EQUAL_UINT32(0U, te.ctr);  /* disarmed after one-shot */
-
-    /*
-     * The event was posted into the queue by SM_TimeEvt_Tick_ at the end
-     * of SM_Process. It will be dequeued on the NEXT SM_Process call.
-     * Tick once more to let the transition action log it.
-     */
-    tick_n(1);
+    TEST_ASSERT_FALSE(te.armed);   /* one-shot disarmed after firing */
     TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
     TEST_ASSERT_EQUAL_UINT16(TEST_EVT_TIMEOUT, fire_log[0].sig);
     TEST_ASSERT_EQUAL_UINT32(99U, fire_log[0].data);
@@ -312,14 +313,14 @@ static void test_oneshot_fires_at_exact_tick(void)
     tick_n(5);
     TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
 
-    /* Clean up (already disarmed, but remove from list) */
-    SM_TimeEvt_Disarm(&te);
+    /* Clean up (already disarmed + unlinked, false expected) */
+    TEST_ASSERT_FALSE(SM_TimeEvt_Disarm(&te));
 }
 
 /**
- * 7. Periodic fires every interval ticks.
+ * 7. Periodic fires every interval ms, drift-free.
  *
- * Arm with ticks=5, interval=5.  Should fire at tick 5, 10, 15.
+ * Arm with delay=5, interval=5 at t=T. Fires at T+5, T+10, T+15 exactly.
  */
 static void test_periodic_fires_at_intervals(void)
 {
@@ -327,36 +328,30 @@ static void test_periodic_fires_at_intervals(void)
     init_and_go_running();
 
     SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 0U);
-    SM_TimeEvt_Arm(&te, 5U, 5U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 5U, 5U));
 
-    /* --- First period: fire at tick 5 --- */
-    tick_n(5);
-    /* Event posted; dequeue + action on next process */
-    tick_n(1);
+    tick_n(4);
+    TEST_ASSERT_EQUAL_UINT32(0U, fire_count);
+
+    tick_n(1);   /* t = T+5: first fire */
     TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
 
-    /* Counter should have reloaded to interval */
-    /* After 1 extra tick above: 5 (reload) - 1 (the extra tick) = 4 */
-    TEST_ASSERT_EQUAL_UINT32(4U, te.ctr);
-
-    /* --- Second period: fire at tick 10 (4 more ticks from current) --- */
     tick_n(4);
-    /* Event posted on the 4th tick; dequeue on next */
-    tick_n(1);
+    TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
+
+    tick_n(1);   /* t = T+10: second fire */
     TEST_ASSERT_EQUAL_UINT32(2U, fire_count);
 
-    /* --- Third period: fire at tick 15 --- */
-    tick_n(4);
-    tick_n(1);
+    tick_n(5);   /* t = T+15: third fire */
     TEST_ASSERT_EQUAL_UINT32(3U, fire_count);
 
-    SM_TimeEvt_Disarm(&te);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Disarm(&te));
 }
 
 /**
- * 8. Multiple time events on same SM instance -- all tick correctly.
+ * 8. Multiple time events on same SM instance -- independent deadlines.
  *
- * Two timers: te_a fires at tick 3, te_b fires at tick 5.
+ * te_a fires at T+3, te_b at T+5.
  */
 static void test_multiple_time_events(void)
 {
@@ -366,35 +361,26 @@ static void test_multiple_time_events(void)
     SM_TimeEvt_Init(&te_a, &ctx, TEST_EVT_TIMEOUT, 0xAA);
     SM_TimeEvt_Init(&te_b, &ctx, TEST_EVT_DATA,    0xBB);
 
-    SM_TimeEvt_Arm(&te_a, 3U, 0U);  /* one-shot at tick 3 */
-    SM_TimeEvt_Arm(&te_b, 5U, 0U);  /* one-shot at tick 5 */
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te_a, 3U, 0U));
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te_b, 5U, 0U));
 
-    /* Tick 1-2: nothing fires */
+    /* t = T+2: nothing fires */
     tick_n(2);
     TEST_ASSERT_EQUAL_UINT32(0U, fire_count);
 
-    /* Tick 3: te_a fires (posted) */
+    /* t = T+3: te_a fires + delivers */
     tick_n(1);
-    TEST_ASSERT_EQUAL_UINT32(0U, te_a.ctr);
-
-    /* Tick 4: te_a event dequeued + processed */
-    tick_n(1);
+    TEST_ASSERT_FALSE(te_a.armed);
     TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
     TEST_ASSERT_EQUAL_UINT16(TEST_EVT_TIMEOUT, fire_log[0].sig);
     TEST_ASSERT_EQUAL_UINT32(0xAA, fire_log[0].data);
 
-    /* Tick 5: te_b fires (posted) */
-    tick_n(1);
-    TEST_ASSERT_EQUAL_UINT32(0U, te_b.ctr);
-
-    /* Tick 6: te_b event dequeued + processed */
-    tick_n(1);
+    /* t = T+5: te_b fires + delivers */
+    tick_n(2);
+    TEST_ASSERT_FALSE(te_b.armed);
     TEST_ASSERT_EQUAL_UINT32(2U, fire_count);
     TEST_ASSERT_EQUAL_UINT16(TEST_EVT_DATA, fire_log[1].sig);
     TEST_ASSERT_EQUAL_UINT32(0xBB, fire_log[1].data);
-
-    SM_TimeEvt_Disarm(&te_a);
-    SM_TimeEvt_Disarm(&te_b);
 }
 
 /**
@@ -406,17 +392,17 @@ static void test_disarm_mid_countdown(void)
     init_and_go_running();
 
     SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 0U);
-    SM_TimeEvt_Arm(&te, 10U, 0U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 10U, 0U));
 
     /* Advance 5 ticks (halfway) */
     tick_n(5);
     TEST_ASSERT_EQUAL_UINT32(0U, fire_count);
-    TEST_ASSERT_TRUE(te.ctr > 0U);  /* still counting */
+    TEST_ASSERT_TRUE(te.armed);
 
     /* Disarm */
     bool was_armed = SM_TimeEvt_Disarm(&te);
     TEST_ASSERT_TRUE(was_armed);
-    TEST_ASSERT_EQUAL_UINT32(0U, te.ctr);
+    TEST_ASSERT_FALSE(te.armed);
 
     /* Run past when it would have fired */
     tick_n(10);
@@ -434,30 +420,22 @@ static void test_rearm_after_disarm(void)
     SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 0U);
 
     /* First arm + disarm */
-    SM_TimeEvt_Arm(&te, 10U, 0U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 10U, 0U));
     tick_n(3);
     SM_TimeEvt_Disarm(&te);
 
-    /* Re-arm with a shorter period */
-    SM_TimeEvt_Arm(&te, 2U, 0U);
-    TEST_ASSERT_EQUAL_UINT32(2U, te.ctr);
+    /* Re-arm with a shorter deadline */
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 2U, 0U));
+    TEST_ASSERT_TRUE(te.armed);
 
-    /* Should fire after 2 ticks */
+    /* Fires + delivers 2 ms later */
     tick_n(2);
-    TEST_ASSERT_EQUAL_UINT32(0U, te.ctr);
-
-    /* Dequeue on next tick */
-    tick_n(1);
+    TEST_ASSERT_FALSE(te.armed);
     TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
-
-    SM_TimeEvt_Disarm(&te);
 }
 
 /**
  * 11. Time event posts correct sig and data payload.
- *
- * Uses two timers with distinct (sig, data) pairs to verify each event
- * carries the payload set at Init time.
  */
 static void test_correct_sig_and_data(void)
 {
@@ -467,25 +445,146 @@ static void test_correct_sig_and_data(void)
     SM_TimeEvt_Init(&te_timeout, &ctx, TEST_EVT_TIMEOUT, 0xDEADBEEF);
     SM_TimeEvt_Init(&te_ack,     &ctx, TEST_EVT_ACK,     0xCAFEBABE);
 
-    SM_TimeEvt_Arm(&te_timeout, 2U, 0U);
-    SM_TimeEvt_Arm(&te_ack,     3U, 0U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te_timeout, 2U, 0U));
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te_ack,     3U, 0U));
 
-    /* Tick 2: te_timeout fires */
+    /* t = T+2: te_timeout fires + delivers */
     tick_n(2);
-    /* Tick 3: te_timeout event dequeued; te_ack fires (posted) */
-    tick_n(1);
-    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1U, fire_count);
+    TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
     TEST_ASSERT_EQUAL_UINT16(TEST_EVT_TIMEOUT, fire_log[0].sig);
     TEST_ASSERT_EQUAL_UINT32(0xDEADBEEF, fire_log[0].data);
 
-    /* Tick 4: te_ack event dequeued */
+    /* t = T+3: te_ack fires + delivers */
     tick_n(1);
     TEST_ASSERT_EQUAL_UINT32(2U, fire_count);
     TEST_ASSERT_EQUAL_UINT16(TEST_EVT_ACK, fire_log[1].sig);
     TEST_ASSERT_EQUAL_UINT32(0xCAFEBABE, fire_log[1].data);
+}
 
-    SM_TimeEvt_Disarm(&te_timeout);
-    SM_TimeEvt_Disarm(&te_ack);
+/**
+ * 12. Firing tracks elapsed TIME, not SM_Process call count.
+ *
+ * The v3.0 defect: timers decremented once per SM_Process call, so missed
+ * calls stretched real-time behavior silently. v4.0: advance the sim clock
+ * 10 ms with NO SM_Process calls, then a single SM_Process must fire a
+ * 10 ms timer immediately.
+ */
+static void test_fires_on_elapsed_time_not_call_count(void)
+{
+    SM_TimeEvt_t te;
+    init_and_go_running();
+
+    SM_TimeEvt_Init(&te, &ctx, TEST_EVT_TIMEOUT, 0x71AE);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 10U, 0U));
+
+    /* Advance time 10 ms WITHOUT calling SM_Process (simulates a stalled
+     * scheduler). Under v3.0 tick-counting this would leave ctr=10. */
+    for (uint32_t i = 0U; i < 10U; i++) {
+        SM_Platform_SimTick();
+    }
+
+    /* One SM_Process: deadline already passed -> fire + deliver now */
+    SM_Process(&ctx);
+    TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
+    TEST_ASSERT_EQUAL_UINT16(TEST_EVT_TIMEOUT, fire_log[0].sig);
+    TEST_ASSERT_EQUAL_UINT32(0x71AE, fire_log[0].data);
+}
+
+/**
+ * 13. Stalled periodic timer: missed periods coalesce into ONE event and
+ *     the next deadline stays on the original phase grid.
+ *
+ * Arm interval=5 at t=T (first fire T+5). Stall until T+17 (missing the
+ * T+5, T+10, T+15 fires). One SM_Process fires exactly ONCE; the next
+ * fire lands at T+20 (phase-aligned), not T+22 (17+5, drifted).
+ */
+static void test_stalled_periodic_coalesces_and_keeps_phase(void)
+{
+    SM_TimeEvt_t te;
+    init_and_go_running();
+
+    SM_TimeEvt_Init(&te, &ctx, TEST_EVT_DATA, 0U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 5U, 5U));
+    uint32_t t0 = SM_Platform_GetTimeMs();
+
+    /* Stall: advance clock to T+17 with no SM_Process */
+    for (uint32_t i = 0U; i < 17U; i++) {
+        SM_Platform_SimTick();
+    }
+
+    SM_Process(&ctx);
+    TEST_ASSERT_EQUAL_UINT32(1U, fire_count);          /* coalesced, not 3 */
+    TEST_ASSERT_EQUAL_UINT32(t0 + 20U, te.deadline);   /* phase-aligned */
+
+    /* Resume normal ticking: next fire exactly at T+20 (3 ticks away) */
+    tick_n(2);
+    TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
+    tick_n(1);
+    TEST_ASSERT_EQUAL_UINT32(2U, fire_count);
+
+    TEST_ASSERT_TRUE(SM_TimeEvt_Disarm(&te));
+}
+
+/**
+ * 14. Arm fails once SM_FEATURE_MAX_TIME_EVENTS timers are scheduled.
+ *
+ * v3.0 accepted over-capacity arms whose timers then silently never fired
+ * (and re-arming one could corrupt the list into a cycle). v4.0 rejects
+ * at Arm time with a false return.
+ */
+static void test_arm_fails_at_capacity(void)
+{
+    static SM_TimeEvt_t pool[SM_FEATURE_MAX_TIME_EVENTS];
+    SM_TimeEvt_t overflow;
+    init_and_go_running();
+
+    for (uint32_t i = 0U; i < SM_FEATURE_MAX_TIME_EVENTS; i++) {
+        SM_TimeEvt_Init(&pool[i], &ctx, TEST_EVT_DATA, i);
+        TEST_ASSERT_TRUE_MESSAGE(SM_TimeEvt_Arm(&pool[i], 1000U, 0U),
+                                 "Arm within capacity must succeed");
+    }
+
+    SM_TimeEvt_Init(&overflow, &ctx, TEST_EVT_ACK, 0U);
+    TEST_ASSERT_FALSE_MESSAGE(SM_TimeEvt_Arm(&overflow, 1000U, 0U),
+                              "Arm beyond capacity must fail");
+    TEST_ASSERT_FALSE(overflow.armed);
+
+    /* Disarming one frees a slot */
+    TEST_ASSERT_TRUE(SM_TimeEvt_Disarm(&pool[0]));
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&overflow, 1000U, 0U));
+
+    /* Clean up */
+    TEST_ASSERT_TRUE(SM_TimeEvt_Disarm(&overflow));
+    for (uint32_t i = 1U; i < SM_FEATURE_MAX_TIME_EVENTS; i++) {
+        TEST_ASSERT_TRUE(SM_TimeEvt_Disarm(&pool[i]));
+    }
+}
+
+/**
+ * 15. Re-arming a scheduled timer updates its deadline in place -- exactly
+ *     one fire results, proving no duplicate list entry was created.
+ */
+static void test_rearm_while_armed_updates_deadline_no_duplicate(void)
+{
+    SM_TimeEvt_t te;
+    init_and_go_running();
+
+    SM_TimeEvt_Init(&te, &ctx, TEST_EVT_CUSTOM, 7U);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 3U, 0U));
+
+    /* Re-arm before the first deadline: pushes the fire out to now+8 */
+    tick_n(1);
+    TEST_ASSERT_TRUE(SM_TimeEvt_Arm(&te, 8U, 0U));
+
+    /* Old deadline (2 more ticks) must NOT fire */
+    tick_n(2);
+    TEST_ASSERT_EQUAL_UINT32(0U, fire_count);
+
+    /* New deadline fires exactly once */
+    tick_n(6);
+    TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
+    tick_n(10);
+    TEST_ASSERT_EQUAL_UINT32(1U, fire_count);
 }
 
 /* =========================================================================
@@ -501,12 +600,16 @@ int main(void)
     RUN_TEST(test_arm_periodic);
     RUN_TEST(test_disarm_armed_returns_true);
     RUN_TEST(test_disarm_already_disarmed_returns_false);
-    RUN_TEST(test_oneshot_fires_at_exact_tick);
+    RUN_TEST(test_oneshot_fires_at_exact_ms);
     RUN_TEST(test_periodic_fires_at_intervals);
     RUN_TEST(test_multiple_time_events);
     RUN_TEST(test_disarm_mid_countdown);
     RUN_TEST(test_rearm_after_disarm);
     RUN_TEST(test_correct_sig_and_data);
+    RUN_TEST(test_fires_on_elapsed_time_not_call_count);
+    RUN_TEST(test_stalled_periodic_coalesces_and_keeps_phase);
+    RUN_TEST(test_arm_fails_at_capacity);
+    RUN_TEST(test_rearm_while_armed_updates_deadline_no_duplicate);
 
     return UNITY_END();
 }

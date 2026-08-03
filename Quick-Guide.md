@@ -1,6 +1,14 @@
-# Quick Guide -- State Machine Framework v3.0
+# Quick Guide -- State Machine Framework v4.0
 
 Handle-based, multi-instance, zero-heap, ISR-safe state machine framework for embedded C.
+
+v4.0 semantics in one paragraph: events are delivered strict-FIFO in post
+order; each `SM_Process` call drains up to `SM_MAX_EVENTS_PER_PROCESS`
+events; a transition runs exit → action → entry atomically within that
+call; time events are millisecond deadlines against
+`SM_Platform_GetTimeMs()`; a state's `timeout_ms` posts the public
+`SM_EVT_TIMEOUT` event, which you handle in your transition table like any
+other event.
 
 ---
 
@@ -89,8 +97,12 @@ static const SM_StateDesc_t states[SM_STATE_COUNT] = {
 Array of `SM_Transition_t` -- const, lives in flash. Each entry specifies
 source state, triggering event, destination state, optional guard, and optional action.
 
+A state with `timeout_ms > 0` posts `SM_EVT_TIMEOUT` when the time
+elapses -- route it like any other event (e.g. the STATE_INIT row below).
+
 ```c
 static const SM_Transition_t transitions[] = {
+    { STATE_INIT, SM_EVT_TIMEOUT, STATE_ERROR, 0, NULL,         NULL },
     { STATE_INIT, EVT_START,   STATE_IDLE,    0, NULL,          NULL },
     { STATE_IDLE, EVT_START,   STATE_RUNNING, 0, is_ready,      log_start },
     { STATE_RUNNING, EVT_STOP, STATE_IDLE,    0, NULL,          NULL },
@@ -168,16 +180,21 @@ static void log_start(SM_Handle_t sm, uint16_t event, uint32_t data) {
 Statically allocate `SM_TimeEvt_t`. Init once, arm/disarm as needed.
 Requires `SM_FEATURE_TIME_EVENTS=1` (default on).
 
+Timers are **millisecond deadlines** against `SM_Platform_GetTimeMs()`
+(v4.0): drift-free periodic reload, wrap-safe, delay/interval < 2^31 ms.
+`SM_TimeEvt_Arm` returns false on bad arguments or when
+`SM_FEATURE_MAX_TIME_EVENTS` timers are already scheduled.
+
 ```c
 static SM_TimeEvt_t heartbeat_te;
 
 /* At init */
 SM_TimeEvt_Init(&heartbeat_te, sm, EVT_TIMEOUT, 0);
 
-/* Arm: 100 tick initial delay, 100 tick periodic reload */
-SM_TimeEvt_Arm(&heartbeat_te, 100, 100);
+/* Arm: first fire in 100 ms, then every 100 ms (periodic) */
+if (!SM_TimeEvt_Arm(&heartbeat_te, 100, 100)) { /* capacity reached */ }
 
-/* One-shot: fires once after 500 ticks, interval=0 */
+/* One-shot: fires once 500 ms from now, interval=0 */
 SM_TimeEvt_Arm(&heartbeat_te, 500, 0);
 
 /* Disarm (returns true if it was armed) */
@@ -195,7 +212,9 @@ Call only from state callbacks -- not ISR-safe.
 /* In on_execute: defer an event the current state cannot handle */
 SM_DeferEvent(sm, EVT_START, 0);
 
-/* In on_entry of another state: recall deferred events (LIFO to front) */
+/* In on_entry of another state: recall the OLDEST deferred event (FIFO)
+ * to the true front of the main queue -- processed before any backlog.
+ * Returns false if none deferred or the main queue is full (event kept). */
 SM_RecallEvent(sm);
 
 /* Discard all deferred events */

@@ -52,8 +52,11 @@ SM_STATIC_ASSERT(SM_EVENT_QUEUE_SIZE > 0 && SM_EVENT_QUEUE_SIZE <= 64,
 SM_STATIC_ASSERT(SM_STATE_COUNT > 0 && SM_STATE_COUNT <= 255,
     "SM_STATE_COUNT must be between 1 and 255");
 
-SM_STATIC_ASSERT(SM_EVENT_COUNT > 0 && SM_EVENT_COUNT <= 65535,
-    "SM_EVENT_COUNT must be between 1 and 65535");
+SM_STATIC_ASSERT(SM_EVENT_COUNT > 0 && SM_EVENT_COUNT <= 65534,
+    "SM_EVENT_COUNT must be between 1 and 65534 (SM_EVT_TIMEOUT occupies SM_EVENT_COUNT)");
+
+SM_STATIC_ASSERT(SM_MAX_EVENTS_PER_PROCESS > 0,
+    "SM_MAX_EVENTS_PER_PROCESS must be >= 1");
 
 SM_STATIC_ASSERT(SM_DEBUG_BUFFER_SIZE >= SM_DEBUG_MSG_MAX_LEN,
     "SM_DEBUG_BUFFER_SIZE must be >= SM_DEBUG_MSG_MAX_LEN");
@@ -102,10 +105,23 @@ typedef SM_Context_t *SM_Handle_t;
  * ===========================================================================*/
 
 /**
+ * @brief State-timeout event (framework-defined, public since v4.0)
+ *
+ * Posted by the engine when a state's timeout_ms elapses. Sits one above the
+ * user event range so it can never collide with application events. Use it
+ * directly in transition tables:
+ *
+ *   { STATE_WAITING, SM_EVT_TIMEOUT, STATE_FAULT, 0, NULL, NULL }
+ *
+ * SM_PostEvent rejects it (engine-only signal); SM_AddTransition accepts it.
+ */
+#define SM_EVT_TIMEOUT  ((uint16_t)(SM_EVENT_COUNT))
+
+/**
  * @brief Event item stored in the ring buffer
  *
  * 8 bytes on 32-bit ARM (with explicit padding).
- * event is uint16_t to support up to 65535 user-defined events.
+ * event is uint16_t to support up to 65534 user-defined events.
  * data is a uint32_t payload carried with every event.
  */
 typedef struct {
@@ -115,15 +131,19 @@ typedef struct {
 } SM_EventItem_t;
 
 /**
- * @brief ISR-safe event ring buffer with QP/C frontEvt optimization
+ * @brief ISR-safe event ring buffer with QP/C frontEvt fast path
  *
  * head = next write position, tail = next read position.
  * count avoids head==tail ambiguity between empty and full.
  *
- * frontEvt optimization (D6): when the queue is empty, SM_PostEvent places
- * the event directly into the front slot instead of the ring buffer. This
- * avoids a ring-buffer round-trip for the common single-event case.
- * SM_Process checks the front slot first, then falls through to the ring.
+ * frontEvt fast path (D6, revised v4.0): when the queue is COMPLETELY empty,
+ * a post places the event directly into the front slot instead of the ring
+ * buffer, avoiding a ring round-trip for the common single-event case.
+ * SM_Process dequeues the front slot first, then the ring FIFO. Because the
+ * front slot is only ever claimed when nothing is pending, it always holds
+ * the oldest event and delivery is strict FIFO in post order for ALL
+ * sources (user, ISR, timeout, time events). The only deliberate exception
+ * is SM_RecallEvent, which inserts at the true front by design.
  */
 typedef struct {
     SM_EventItem_t items[SM_EVENT_QUEUE_SIZE]; /**< Ring buffer storage */
@@ -179,15 +199,19 @@ typedef void (*SM_Action_t)(SM_Handle_t sm, uint16_t event, uint32_t data);
  * @brief Time event (intrusive linked-list node)
  *
  * One-shot or periodic timer that posts an event to the owning state machine
- * when the down-counter reaches zero. Managed via SM_TimeEvt_Arm /
+ * when its millisecond deadline passes. Managed via SM_TimeEvt_Arm /
  * SM_TimeEvt_Disarm. The linked list is walked by SM_TimeEvt_Tick_() inside
  * SM_Process().
  *
  * Users allocate SM_TimeEvt_t statically and pass them to the API.
  *
- * Each SM_Process() tick decrements ctr when armed. The event posts when ctr
- * becomes 0 after a decrement. If interval > 0, ctr reloads for periodic
- * firing; if interval == 0, the timer stays disarmed (ctr == 0) until re-armed.
+ * v4.0: deadlines are absolute SM_Platform_GetTimeMs() values (wrap-safe
+ * modular comparison; delay/interval must be < 2^31 ms ~= 24.8 days).
+ * Firing is checked once per SM_Process(), so the effective resolution is
+ * the SM_Process call period -- but a late check fires immediately instead
+ * of stretching with the call cadence (the v3.0 tick-counted behavior).
+ * Periodic timers advance deadline by whole intervals: drift-free and
+ * phase-preserving; periods missed during a stall coalesce into ONE event.
  */
 typedef struct SM_TimeEvt {
     struct SM_TimeEvt *next;   /**< Next node in the per-instance linked list */
@@ -195,8 +219,10 @@ typedef struct SM_TimeEvt {
     uint16_t sig;              /**< Event ID to post on expiry */
     uint16_t _pad;             /**< Alignment padding */
     uint32_t data;             /**< Event payload to post */
-    uint32_t ctr;              /**< Down-counter (ticks); 0 = disarmed */
-    uint32_t interval;         /**< Auto-reload value (0 = one-shot) */
+    uint32_t deadline;         /**< Absolute fire time (SM_Platform_GetTimeMs) */
+    uint32_t interval;         /**< Reload period in ms (0 = one-shot) */
+    bool armed;                /**< True while scheduled to fire */
+    uint8_t _pad2[3];          /**< Alignment padding (explicit) */
 } SM_TimeEvt_t;
 
 #endif /* SM_FEATURE_TIME_EVENTS */
@@ -234,8 +260,16 @@ typedef struct {
     SM_StateCallback_t on_entry;   /**< Called once on state entry */
     SM_StateCallback_t on_execute; /**< Called every SM_Process() cycle while in state */
     SM_StateCallback_t on_exit;    /**< Called once on state exit */
-    uint32_t timeout_ms;           /**< Auto-timeout (0 = no timeout) */
-    uint32_t min_dwell_ms;         /**< Minimum time before transitions allowed (0 = none) */
+    uint32_t timeout_ms;           /**< Auto-timeout: posts SM_EVT_TIMEOUT once per
+                                        entry when elapsed >= timeout_ms (0 = none) */
+    uint32_t min_dwell_ms;         /**< Minimum time before ANY queued event is
+                                        processed in this state (0 = none).
+                                        Interaction: if min_dwell_ms > timeout_ms the
+                                        SM_EVT_TIMEOUT event still POSTS at
+                                        timeout_ms but is only PROCESSED once the
+                                        dwell has elapsed -- the effective timeout
+                                        transition time is max(timeout_ms,
+                                        min_dwell_ms). */
 #if SM_FEATURE_HSM
     uint16_t parent;               /**< Parent state index (UINT16_MAX = no parent) */
 #endif
@@ -332,7 +366,9 @@ typedef void (*SM_ErrorCallback_t)(SM_Handle_t sm, SM_ErrorLevel_t level, uint16
  */
 typedef struct {
     uint32_t total_transitions;                  /**< Total state transitions */
-    uint32_t total_events_posted;                /**< Total events posted */
+    uint32_t total_events_posted;                /**< Total events posted (user posts
+                                                      plus engine-internal timeout and
+                                                      time-event posts) */
     uint32_t total_events_dropped;               /**< Events dropped (queue full) */
     uint32_t total_timeouts;                     /**< State timeouts fired */
     uint32_t state_entry_counts[SM_STATE_COUNT]; /**< Per-state entry count */

@@ -204,14 +204,9 @@ static const SM_StateDesc_t test_states_timeout[4] = {
     [TEST_STATE_ERROR]   = { cb_error_entry,    cb_error_execute,   cb_error_exit,   0,   0 },
 };
 
-/*
- * Timeout transition: SM_INTERNAL_TIMEOUT == SM_EVENT_COUNT (8).
- * The engine uses sm_post_internal which bypasses the event-range check,
- * then sm_find_transition matches on the event field regardless of range.
- * So we define a transition on event == SM_EVENT_COUNT for the timeout.
- */
+/* Timeout transition uses the public SM_EVT_TIMEOUT event (v4.0). */
 static const SM_Transition_t test_transitions_timeout[] = {
-    { TEST_STATE_INIT,    SM_EVENT_COUNT, TEST_STATE_ERROR,   0, NULL, NULL },
+    { TEST_STATE_INIT,    SM_EVT_TIMEOUT, TEST_STATE_ERROR,   0, NULL, NULL },
     { TEST_STATE_INIT,    TEST_EVT_START, TEST_STATE_RUNNING, 0, NULL, NULL },
 };
 
@@ -461,36 +456,26 @@ static void test_process_transition_sequence(void)
     call_log_idx = 0;
     memset(call_log, 0, sizeof(call_log));
 
-    /* Process: should dequeue START, find transition, execute sequence */
+    /* Process: dequeues START and executes the FULL atomic sequence
+     * exit -> action -> entry within this single call (v4.0) */
     SM_Process(&ctx);
 
-    /* Verify sequence: on_exit(INIT) -> action -> on_entry(RUNNING) happens
-     * during this cycle. Note: on_entry(RUNNING) runs on the NEXT SM_Process
-     * because state_entered is set to true, and the next cycle handles it. */
-
-    /* on_exit(INIT) and action should have run this cycle */
     TEST_ASSERT_EQUAL_INT(1, cb_init_exit_count);
     TEST_ASSERT_EQUAL_INT(1, cb_action_count);
     TEST_ASSERT_EQUAL_UINT16(TEST_EVT_START, cb_action_last_event);
     TEST_ASSERT_EQUAL_UINT32(42, cb_action_last_data);
-
-    /* Verify order: exit before action */
-    TEST_ASSERT_TRUE(call_log_idx >= 2);
-    TEST_ASSERT_EQUAL_INT(CL_INIT_EXIT, call_log[0]);
-    TEST_ASSERT_EQUAL_INT(CL_ACTION, call_log[1]);
-
-    /* on_entry(RUNNING) runs on the next SM_Process call */
-    SM_Process(&ctx);
     TEST_ASSERT_EQUAL_INT(1, cb_running_entry_count);
 
-    /* Verify the full 3-step order */
+    /* Verify the full 3-step order happened in one call */
     TEST_ASSERT_TRUE(call_log_idx >= 3);
     TEST_ASSERT_EQUAL_INT(CL_INIT_EXIT, call_log[0]);
     TEST_ASSERT_EQUAL_INT(CL_ACTION, call_log[1]);
     TEST_ASSERT_EQUAL_INT(CL_RUNNING_ENTRY, call_log[2]);
 
-    /* Now in RUNNING state */
+    /* Now in RUNNING state; a further Process must not re-run entry */
     TEST_ASSERT_EQUAL_UINT16(TEST_STATE_RUNNING, SM_GetState(&ctx));
+    SM_Process(&ctx);
+    TEST_ASSERT_EQUAL_INT(1, cb_running_entry_count);
 }
 
 /* =============================================================================
@@ -545,12 +530,9 @@ static void test_guard_allows_transition(void)
     SM_PostEvent(&ctx, TEST_EVT_START, 99);
     SM_Process(&ctx);
 
-    /* Transition should have fired */
+    /* Transition fired -- action ran and RUNNING was entered atomically */
     TEST_ASSERT_EQUAL_INT(1, cb_action_count);
     TEST_ASSERT_EQUAL_UINT32(99, cb_action_last_data);
-
-    /* Next cycle enters RUNNING */
-    SM_Process(&ctx);
     TEST_ASSERT_EQUAL_UINT16(TEST_STATE_RUNNING, SM_GetState(&ctx));
     TEST_ASSERT_EQUAL_INT(1, cb_running_entry_count);
 }
@@ -580,8 +562,8 @@ static void test_multi_guard_fallthrough(void)
     SM_PostEvent(&ctx, TEST_EVT_START, 0);
     SM_Process(&ctx);
 
-    /* Should have skipped first entry (-> ERROR) and taken second (-> RUNNING) */
-    SM_Process(&ctx); /* on_entry for new state */
+    /* Should have skipped first entry (-> ERROR) and taken second (-> RUNNING);
+     * entry ran atomically in the transition cycle */
     TEST_ASSERT_EQUAL_UINT16(TEST_STATE_RUNNING, SM_GetState(&ctx));
     TEST_ASSERT_EQUAL_INT(1, cb_action_count); /* action on second transition */
     TEST_ASSERT_EQUAL_INT(0, cb_error_entry_count); /* NOT the ERROR state */
@@ -620,24 +602,9 @@ static void test_state_timeout_fires_once(void)
     SM_Platform_SimTick();
     SM_Process(&ctx);
 
-    /*
-     * Timeout fires: SM_INTERNAL_TIMEOUT posted internally.
-     * The event is dequeued and the transition INIT -> ERROR fires this cycle.
-     * But the timeout event was just posted and hasn't been dequeued yet because
-     * the timeout check happens AFTER on_execute and BEFORE event dequeue.
-     * Actually, looking at SM_Process: timeout check happens first, posts event,
-     * then event dequeue processes it in the SAME cycle (since dwell_ok is true
-     * and there's an event in the queue now).
-     *
-     * So after this SM_Process, we should have transitioned or the timeout event
-     * is pending. Let's check by running another cycle if needed.
-     */
-
-    /* The internal timeout event was posted and should trigger transition
-     * in this same SM_Process call (timeout check runs before event dequeue). */
-
-    /* Run another cycle to let on_entry(ERROR) fire */
-    SM_Process(&ctx);
+    /* Timeout posts SM_EVT_TIMEOUT (check runs before the drain), the drain
+     * consumes it, and the INIT -> ERROR transition -- including
+     * on_entry(ERROR) -- completes within this same SM_Process call. */
     TEST_ASSERT_EQUAL_UINT16(TEST_STATE_ERROR, SM_GetState(&ctx));
     TEST_ASSERT_EQUAL_INT(1, cb_error_entry_count);
 
@@ -699,11 +666,9 @@ static void test_min_dwell_prevents_early_transition(void)
     SM_Platform_SimTick();
     SM_Process(&ctx);
 
-    /* Now the event should be dequeued and transition should fire */
+    /* The queued event is dequeued and the full transition (including
+     * on_entry(RUNNING)) completes in this call */
     TEST_ASSERT_EQUAL_INT(1, cb_init_exit_count);
-
-    /* Next cycle enters RUNNING */
-    SM_Process(&ctx);
     TEST_ASSERT_EQUAL_UINT16(TEST_STATE_RUNNING, SM_GetState(&ctx));
     TEST_ASSERT_EQUAL_INT(1, cb_running_entry_count);
 }

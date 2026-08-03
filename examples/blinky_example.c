@@ -1,13 +1,19 @@
 /**
  * @file blinky_example.c
- * @brief v3.0 example -- LED blinker with periodic time events
- * @version 3.0.0
- * @date 2026-04-19
+ * @brief v4.0 example -- LED blinker with periodic time events
+ * @version 4.0.0
+ * @date 2026-08-03
  *
- * Demonstrates the v3.0 time event API (SM_TimeEvt_*):
+ * Demonstrates the v4.0 time event API (SM_TimeEvt_*):
  *   - Arm a periodic timer on state entry, disarm on exit
- *   - Timer fires EVT_BLINK_TICK every 5 SM_Process() calls
+ *   - Timer fires EVT_BLINK_TICK every 5 ms (deadline-based, drift-free)
  *   - Pause/resume blinking via EVT_PAUSE and EVT_TOGGLE events
+ *
+ * Time events are millisecond-based (v4.0): they follow
+ * SM_Platform_GetTimeMs(), NOT the SM_Process call count. This example runs
+ * on the simulation platform, so the main loop advances the sim clock with
+ * SM_Platform_SimTick() to model a 1 ms task period. On real hardware,
+ * override SM_Platform_GetTimeMs() with your tick source instead.
  *
  * States: OFF -> BLINKING -> PAUSED -> BLINKING (resume)
  * Events: EVT_TOGGLE, EVT_BLINK_TICK, EVT_PAUSE
@@ -50,7 +56,7 @@ typedef enum {
 /**
  * @brief Periodic blink timer
  *
- * Posts EVT_BLINK_TICK every 5 SM_Process() calls while armed.
+ * Posts EVT_BLINK_TICK every 5 ms while armed.
  * Armed on STATE_BLINKING entry, disarmed on STATE_BLINKING exit.
  */
 static SM_TimeEvt_t blink_timer;
@@ -83,14 +89,16 @@ static void on_off_exit(SM_Handle_t sm)
 
 static void on_blinking_entry(SM_Handle_t sm)
 {
-    printf("  [BLINKING] Entry -- arming blink timer (period=5 ticks)\n");
+    printf("  [BLINKING] Entry -- arming blink timer (period=5 ms)\n");
 
     /* Initialize and arm the periodic time event.
      * SM_TimeEvt_Init sets the owning SM and the event signal.
-     * SM_TimeEvt_Arm starts the down-counter: first fire after 5 ticks,
-     * then auto-reload every 5 ticks (periodic). */
+     * SM_TimeEvt_Arm schedules the first fire 5 ms from now, then every
+     * 5 ms (drift-free: deadlines advance on the original phase grid). */
     SM_TimeEvt_Init(&blink_timer, sm, (uint16_t)EVT_BLINK_TICK, 0U);
-    SM_TimeEvt_Arm(&blink_timer, 5U, 5U);
+    if (!SM_TimeEvt_Arm(&blink_timer, 5U, 5U)) {
+        printf("  [BLINKING] WARNING: timer capacity reached, no blink\n");
+    }
 }
 
 static void on_blinking_execute(SM_Handle_t sm)
@@ -230,8 +238,8 @@ int main(void)
     printf("Posting EVT_TOGGLE to start blinking...\n\n");
     SM_PostEvent(&sm_ctx, (uint16_t)EVT_TOGGLE, 0U);
 
-    /* Run for 60 iterations total:
-     *   0-29:  BLINKING (timer fires LED toggle every 5 ticks)
+    /* Run for 60 iterations, each modeling a 1 ms task period:
+     *   0-29:  BLINKING (timer fires LED toggle every 5 ms)
      *   30:    post EVT_PAUSE -> PAUSED
      *   30-44: PAUSED (no blinks)
      *   45:    post EVT_TOGGLE -> BLINKING (resume)
@@ -247,6 +255,10 @@ int main(void)
             SM_PostEvent(&sm_ctx, (uint16_t)EVT_TOGGLE, 0U);
         }
 
+        /* Advance the simulation clock 1 ms, then run the state machine.
+         * On hardware this pairing is your periodic task: the clock advances
+         * on its own and you just call SM_Process. */
+        SM_Platform_SimTick();
         SM_Process(&sm_ctx);
 
         /* Print status every 10 iterations */

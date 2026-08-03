@@ -170,16 +170,42 @@ void test_RecallEvent_posts_to_front_of_main_queue(void)
      * so this goes into the ring buffer */
     TEST_ASSERT_TRUE(SM_PostEvent(sm, TEST_EVT_DATA, 0xDA7A));
 
-    /* Process -- the recalled event (ACK) should fire first because it
-     * occupies the front slot, which is checked before the ring buffer */
+    /* One SM_Process drains both (v4.0). Verify delivery ORDER via the
+     * log: recalled ACK first, then the posted DATA. */
     SM_Process(sm);
-    TEST_ASSERT_EQUAL_UINT16(TEST_EVT_ACK, last_processed_event);
-    TEST_ASSERT_EQUAL_UINT32(0xACE, last_processed_data);
-
-    /* Process again -- the ring buffer event (DATA) fires now */
-    SM_Process(sm);
-    TEST_ASSERT_EQUAL_UINT16(TEST_EVT_DATA, last_processed_event);
+    TEST_ASSERT_EQUAL_UINT8(2U, processed_event_count);
+    TEST_ASSERT_EQUAL_UINT16(TEST_EVT_ACK,  processed_event_log[0]);
+    TEST_ASSERT_EQUAL_UINT16(TEST_EVT_DATA, processed_event_log[1]);
     TEST_ASSERT_EQUAL_UINT32(0xDA7A, last_processed_data);
+}
+
+/**
+ * Test 3b (v4.0): Recall with an OCCUPIED front slot inserts at the true
+ * front -- the recalled event is processed next, the displaced front event
+ * immediately after, then the rest of the backlog.
+ *
+ * v3.0 defect: this path appended the recalled event to the BACK of the
+ * ring, contradicting the recall-to-front contract.
+ */
+void test_RecallEvent_displaces_occupied_front(void)
+{
+    /* Defer CUSTOM */
+    TEST_ASSERT_TRUE(SM_DeferEvent(sm, TEST_EVT_CUSTOM, 0xC0C0));
+
+    /* Post two events: DATA -> front slot, ACK -> ring backlog */
+    TEST_ASSERT_TRUE(SM_PostEvent(sm, TEST_EVT_DATA, 0xD1));
+    TEST_ASSERT_TRUE(SM_PostEvent(sm, TEST_EVT_ACK,  0xA1));
+
+    /* Recall with the front occupied */
+    TEST_ASSERT_TRUE(SM_RecallEvent(sm));
+
+    /* One SM_Process drains all three. Order must be:
+     * CUSTOM (recalled, true front), DATA (displaced front), ACK (backlog) */
+    SM_Process(sm);
+    TEST_ASSERT_EQUAL_UINT8(3U, processed_event_count);
+    TEST_ASSERT_EQUAL_UINT16(TEST_EVT_CUSTOM, processed_event_log[0]);
+    TEST_ASSERT_EQUAL_UINT16(TEST_EVT_DATA,   processed_event_log[1]);
+    TEST_ASSERT_EQUAL_UINT16(TEST_EVT_ACK,    processed_event_log[2]);
 }
 
 /**
@@ -315,6 +341,7 @@ int main(void)
     RUN_TEST(test_DeferEvent_stores_event_returns_true);
     RUN_TEST(test_DeferEvent_full_queue_returns_false);
     RUN_TEST(test_RecallEvent_posts_to_front_of_main_queue);
+    RUN_TEST(test_RecallEvent_displaces_occupied_front);
     RUN_TEST(test_RecallEvent_empty_queue_returns_false);
     RUN_TEST(test_multiple_defers_recall_order_FIFO);
     RUN_TEST(test_FlushDeferred_discards_all);

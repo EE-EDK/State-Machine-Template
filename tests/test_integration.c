@@ -113,9 +113,9 @@ static void cb_running_entry(SM_Handle_t sm)
     cb_running_entry_count++;
 
     if (arm_timer_on_running_entry) {
-        /* Arm a periodic timer: fires EVT_DATA every 3 ticks */
+        /* Arm a periodic timer: fires EVT_DATA every 3 ms */
         SM_TimeEvt_Init(&g_periodic_timer, sm, TEST_EVT_DATA, 0xDA7A);
-        SM_TimeEvt_Arm(&g_periodic_timer, 3U, 3U);
+        (void)SM_TimeEvt_Arm(&g_periodic_timer, 3U, 3U);
     }
 }
 
@@ -150,7 +150,12 @@ static void cb_stopped_entry(SM_Handle_t sm)
     cb_stopped_entry_count++;
 
     if (recall_on_stopped_entry) {
-        recall_succeeded = SM_RecallEvent(sm);
+        /* Latch success: the STOPPED->STOPPED self-loop from a recalled
+         * event re-enters this callback within the same drain, and the
+         * second recall (empty defer queue) must not clobber the result. */
+        if (SM_RecallEvent(sm)) {
+            recall_succeeded = true;
+        }
     }
 }
 
@@ -425,9 +430,15 @@ static void test_full_lifecycle(void)
 /* =============================================================================
  * TEST 2: Time event + state transition
  *
- * Arm a periodic timer on RUNNING entry (every 3 ticks, posts EVT_DATA).
+ * Arm a periodic timer on RUNNING entry (every 3 ms, posts EVT_DATA).
  * Verify the timer fires and the self-loop transition + action are invoked.
  * Disarm on RUNNING exit.
+ *
+ * v4.0 mechanics exercised here: the self-loop transition runs
+ * exit (disarms) -> action -> entry (re-arms at now+3) atomically inside
+ * one SM_Process call, and the timer fire is DELIVERED in the same call it
+ * expires in (tick runs before the drain). Net effect: one EVT_DATA action
+ * every 3 ms, with clean periodic cadence despite the disarm/re-arm cycle.
  * ===========================================================================*/
 
 static void test_time_event_with_transition(void)
@@ -437,51 +448,37 @@ static void test_time_event_with_transition(void)
 
     init_lifecycle_sm();
 
-    /* Transition to RUNNING */
+    /* Transition to RUNNING -- entry runs in this same call and arms the
+     * timer at now+3 */
     SM_PostEvent(g_sm, TEST_EVT_START, 0);
-    SM_Process(g_sm);  /* transition fires */
+    SM_Process(g_sm);
     TEST_ASSERT_EQUAL_UINT16(TEST_STATE_RUNNING, SM_GetState(g_sm));
-
-    tick();  /* on_entry(RUNNING): arms the periodic timer */
     TEST_ASSERT_EQUAL_INT(1, cb_running_entry_count);
-    /* Timer armed with ctr=3, but SM_TimeEvt_Tick_ runs at the end of this
-     * same SM_Process cycle, so ctr is already decremented: 3->2. */
-    TEST_ASSERT_EQUAL_UINT32(2U, g_periodic_timer.ctr);
+    TEST_ASSERT_TRUE(g_periodic_timer.armed);
 
     /* Reset the action log so we only see timer-generated events */
     action_log_count = 0;
 
-    /* The timer ctr is at 2. It fires when ctr reaches 0:
-     *   tick 1: ctr 2->1
-     *   tick 2: ctr 1->0, fires (posts EVT_DATA), reloads to 3
-     * Then the event is dequeued on the next tick. */
+    /* 2 ms: deadline (T+3) not reached */
     tick_n(2);
-    TEST_ASSERT_EQUAL_UINT32(0U, action_log_count);
+    TEST_ASSERT_EQUAL_INT(0, action_log_count);
 
-    /* Dequeue tick: SM_Process dequeues EVT_DATA, self-loop action fires.
-     * But the self-loop transition also runs on_exit(RUNNING) which disarms
-     * the timer, then sets state_entered=true. On the NEXT cycle,
-     * on_entry(RUNNING) re-arms it. */
+    /* 3rd ms: timer fires AND the EVT_DATA self-loop runs in this call */
     tick();
-    TEST_ASSERT_TRUE(action_log_count >= 1);
+    TEST_ASSERT_EQUAL_INT(1, action_log_count);
     TEST_ASSERT_EQUAL_UINT16(TEST_EVT_DATA, action_log[0].event);
     TEST_ASSERT_EQUAL_UINT32(0xDA7A, action_log[0].data);
 
-    /* The self-loop transition triggered on_exit (disarmed timer) and set
-     * state_entered. Next tick: on_entry re-arms timer (ctr=3), then
-     * SM_TimeEvt_Tick_ decrements -> ctr=2. */
-    int initial_count = action_log_count;
-    tick();  /* on_entry re-arms; ticked once -> ctr=2 */
-    TEST_ASSERT_EQUAL_UINT32(2U, g_periodic_timer.ctr);
-
-    /* Wait for second firing: ctr 2->1->0 (2 ticks) + 1 dequeue tick */
-    tick_n(3);
-    TEST_ASSERT_TRUE(action_log_count > initial_count);
+    /* The self-loop re-armed the timer at fire-time+3: second fire 3 ms on */
+    TEST_ASSERT_TRUE(g_periodic_timer.armed);
+    tick_n(2);
+    TEST_ASSERT_EQUAL_INT(1, action_log_count);
+    tick();
+    TEST_ASSERT_EQUAL_INT(2, action_log_count);
 
     /* Transition to STOPPED -> on_exit(RUNNING) disarms timer.
      * Note: cb_running_exit_count is already > 0 because each self-loop
-     * RUNNING->RUNNING also calls on_exit. We only check that after this
-     * transition the SM is in STOPPED. */
+     * RUNNING->RUNNING also calls on_exit. */
     int exit_before_stop = cb_running_exit_count;
     SM_PostEvent(g_sm, TEST_EVT_STOP, 0);
     SM_Process(g_sm);
@@ -489,14 +486,11 @@ static void test_time_event_with_transition(void)
     TEST_ASSERT_EQUAL_INT(exit_before_stop + 1, cb_running_exit_count);
 
     /* Timer should be disarmed */
-    TEST_ASSERT_EQUAL_UINT32(0U, g_periodic_timer.ctr);
+    TEST_ASSERT_FALSE(g_periodic_timer.armed);
 
     /* Further ticks should produce no more timer events */
     int count_before = action_log_count;
     tick_n(10);
-    /* Only the stopped on_execute runs, no more DATA events from timer.
-     * Any action_log entries from this point would be from EVT_DATA
-     * transitions which should not fire because the timer is disarmed. */
     TEST_ASSERT_EQUAL_INT(count_before, action_log_count);
 }
 
@@ -612,37 +606,31 @@ static void test_deferred_events_across_states(void)
 
     init_lifecycle_sm();
 
-    /* Transition to RUNNING */
+    /* Transition to RUNNING (atomic: entry runs in this call) */
     SM_PostEvent(g_sm, TEST_EVT_START, 0);
-    SM_Process(g_sm);  /* transition fires */
-    SM_Process(g_sm);  /* on_entry(RUNNING) fires */
+    SM_Process(g_sm);
     TEST_ASSERT_EQUAL_UINT16(TEST_STATE_RUNNING, SM_GetState(g_sm));
 
-    /* on_execute(RUNNING) runs and defers EVT_CUSTOM */
+    /* on_execute(RUNNING) runs next cycle and defers EVT_CUSTOM */
     SM_Process(g_sm);
     TEST_ASSERT_TRUE(custom_was_deferred);
 
     /* Reset action log before the transition to STOPPED */
     action_log_count = 0;
 
-    /* Transition to STOPPED */
+    /* Transition to STOPPED. Within this ONE call (v4.0 drain + atomic
+     * transitions): STOP dequeued -> exit(RUNNING) -> entry(STOPPED)
+     * recalls CUSTOM to the queue front -> drain continues -> CUSTOM
+     * self-loop action fires (re-entering STOPPED). */
     SM_PostEvent(g_sm, TEST_EVT_STOP, 0);
-    SM_Process(g_sm);  /* dequeues STOP, on_exit(RUNNING) + transition */
-    TEST_ASSERT_EQUAL_UINT16(TEST_STATE_STOPPED, SM_GetState(g_sm));
-
-    /* on_entry(STOPPED) runs next cycle and recalls the deferred event */
     SM_Process(g_sm);
-    TEST_ASSERT_EQUAL_INT(1, cb_stopped_entry_count);
+    TEST_ASSERT_EQUAL_UINT16(TEST_STATE_STOPPED, SM_GetState(g_sm));
+    TEST_ASSERT_TRUE(cb_stopped_entry_count >= 1);
     TEST_ASSERT_TRUE(recall_succeeded);
 
-    /* The recalled EVT_CUSTOM was posted to the front of the main queue.
-     * Next SM_Process should dequeue it and fire the self-loop action. */
-    SM_Process(g_sm);
     TEST_ASSERT_TRUE(action_log_count >= 1);
 
-    /* Find the EVT_CUSTOM action in the log. The STOP action was logged
-     * before we cleared action_log_count, so the first entry should be
-     * from EVT_CUSTOM. */
+    /* Find the EVT_CUSTOM action in the log with its payload intact */
     bool found_custom = false;
     for (int i = 0; i < action_log_count; i++) {
         if (action_log[i].event == TEST_EVT_CUSTOM) {
