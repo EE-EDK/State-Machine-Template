@@ -1,0 +1,29 @@
+# Basic -- minimal 3-state lifecycle with a timeout failsafe.
+# Mirrors examples/basic_example.c. The INIT timeout demonstrates D15:
+# a timeout cannot be declared without a route.
+
+schema = 1
+machine = "basic"
+prefix = "BASIC"
+initial = "INIT"
+
+events = ["START", "STOP"]
+
+[states.INIT]
+entry = "on_init_entry"
+execute = "on_init_execute"
+exit = "on_init_exit"
+timeout = { after_ms = 5000, goto = "STOPPED" }   # failsafe: halt if no start
+on = { START = "RUNNING" }
+
+[states.RUNNING]
+entry = "on_running_entry"
+execute = "on_running_execute"
+exit = "on_running_exit"
+on = { STOP = "STOPPED" }
+
+[states.STOPPED]
+entry = "on_stopped_entry"
+execute = "on_stopped_execute"
+exit = "on_stopped_exit"
+on = { START = "RUNNING" }

@@ -37,8 +37,12 @@ state-machine-template/
 │   └── sm_config_template.h
 ├── docs_dev/               # Development planning docs
 │   ├── task_plan.md        # Master 9-phase rewrite plan with decisions D1-D11
+│   ├── phase_b_model_plan.md # Phase B (smgen) plan, decisions D12-D17
 │   ├── findings.md         # Bug inventory, architecture gaps, QP/C review
 │   └── progress.md         # Session log
+├── smgen/                  # Model compiler (B1: schema+validator+CLI, stdlib-only)
+├── models/                 # TOML machine models (blinky, basic, sensor_pipeline)
+├── graphify/               # Code+machine knowledge-graph generator (stdlib-only)
 ├── tests/
 │   ├── CMakeLists.txt          # Test build system (Unity FetchContent, sm_framework_test lib)
 │   ├── test_common.h           # Shared test enums, assert-capture macros
@@ -119,7 +123,7 @@ See `docs_dev/task_plan.md` for full rationale. Key: D6 frontEvt, D7 DIS, D8 bou
 
 ## TODO
 All phases complete. Active roadmap:
-- [ ] **Phase B — model as source of truth (`smgen`):** TOML machine models → generated C tables with build-failing validation, committed artifacts, round-trip verification against graphify's extractor, model hash in firmware. Full plan with decisions D12–D17 and phase gates B1–B4: `docs_dev/phase_b_model_plan.md`. Start with B1 (schema + validator).
+- [ ] **Phase B — model as source of truth (`smgen`):** TOML machine models → generated C tables with build-failing validation, committed artifacts, round-trip verification against graphify's extractor, model hash in firmware. Full plan with decisions D12–D17 and phase gates B1–B4: `docs_dev/phase_b_model_plan.md`. **B1 complete** (smgen/ package: schema parser + V1–V10 validator + validate/hash CLI; pilot models in models/ validate clean; 39 Python tests in ctest). Next: B2 (C emitters, migrate blinky then basic).
 
 Maintenance items:
 - [ ] Fix cppcheck installation (std.cfg path hardcoded to non-existent R: drive)

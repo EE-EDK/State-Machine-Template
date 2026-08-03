@@ -1,0 +1,31 @@
+# Blinky -- LED blinker with a periodic time event.
+# Mirrors examples/blinky_example.c (B2 migrates the example to generate
+# its tables from this model). The 5 ms periodic timer is armed/disarmed
+# inside the entry/exit callbacks -- timers are runtime behavior, not
+# table structure, so they live in C, not in the model.
+
+schema = 1
+machine = "blinky"
+prefix = "BLINKY"
+initial = "OFF"
+
+events = ["TOGGLE", "BLINK_TICK", "PAUSE"]
+
+[states.OFF]
+entry = "on_off_entry"
+execute = "on_off_execute"
+exit = "on_off_exit"
+on = { TOGGLE = "BLINKING" }
+
+[states.BLINKING]
+entry = "on_blinking_entry"    # arms the periodic blink timer
+execute = "on_blinking_execute"
+exit = "on_blinking_exit"      # disarms it
+on.PAUSE = "PAUSED"
+on.BLINK_TICK = { goto = "BLINKING", action = "action_toggle_led" }
+
+[states.PAUSED]
+entry = "on_paused_entry"
+execute = "on_paused_execute"
+exit = "on_paused_exit"
+on = { TOGGLE = "BLINKING" }

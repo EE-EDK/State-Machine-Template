@@ -1,8 +1,19 @@
 # Phase B Plan: Model as Source of Truth (smgen)
 
-**Status: PLANNED — not started.** Decisions D12–D17 recorded below.
+**Status: B1 COMPLETE — B2 next.** Decisions D12–D17 recorded below.
 Prerequisite: v4.0.0 semantic release (complete) and the graphify
 machine-level extractor + validator (complete, `graphify/machines.py`).
+
+B1 delivered: `smgen/` package (model.py schema parser, validate.py
+V1–V10, CLI `validate`/`hash`), pilot models under `models/` (blinky,
+basic, sensor_pipeline — all validate clean under `--strict`), 39-case
+Python unit suite proving every schema rejection and V-check fires,
+wired into ctest as `test_smgen_unit` + `test_smgen_models` (21 suites
+total). Side effect: V8 caught `EVT_TICK` in basic_example — declared,
+never posted, never routed — removed (SM_EVENT_COUNT 3→2).
+One refinement vs. the plan text: `allow_drop` is a state-level key
+listing events (`allow_drop = ["PROCESS_DONE"]`) rather than a per-group
+attribute — TOML arrays can't carry attributes.
 
 ## Goal
 

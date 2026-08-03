@@ -86,6 +86,23 @@ add_sm_test(test_safety       test_safety.c)
 add_sm_test(test_hal          test_hal.c)
 add_sm_test(test_integration  test_integration.c)
 
+# =============================================================================
+# SMGEN MODEL TOOLING TESTS (Python, optional -- skipped without Python 3.11+)
+# =============================================================================
+
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND AND NOT Python3_VERSION VERSION_LESS "3.11")
+    add_test(NAME test_smgen_unit
+             COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                     -s ${CMAKE_SOURCE_DIR}/smgen/tests -t ${CMAKE_SOURCE_DIR})
+    add_test(NAME test_smgen_models
+             COMMAND ${Python3_EXECUTABLE} -m smgen validate --strict
+                     ${CMAKE_SOURCE_DIR}/models/blinky.toml
+                     ${CMAKE_SOURCE_DIR}/models/basic.toml
+                     ${CMAKE_SOURCE_DIR}/models/sensor_pipeline.toml
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+endif()
+
 add_sm_test(test_rt_transition    test_rt_transition.c)
 add_sm_test(test_post_event_guards test_post_event_guards.c)
 add_sm_test(test_error_null_api    test_error_null_api.c)

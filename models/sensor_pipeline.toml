@@ -1,0 +1,40 @@
+# Sensor pipeline -- guard conditions and transition actions.
+# Mirrors examples/sensor_pipeline_example.c.
+#
+# (PROCESS, PROCESS_DONE) is deliberately guard-only: data failing the
+# quality gate is dropped, and PROCESS waits for an abort/restart via
+# START_SAMPLE. allow_drop declares that intent explicitly, silencing
+# V5 the honest way instead of adding a fallthrough the design never had.
+
+schema = 1
+machine = "sensor_pipeline"
+prefix = "PIPE"
+initial = "IDLE"
+
+events = ["START_SAMPLE", "SAMPLE_DONE", "PROCESS_DONE", "TX_DONE"]
+
+[states.IDLE]
+entry = "on_idle_entry"
+execute = "on_idle_execute"
+exit = "on_idle_exit"
+on = { START_SAMPLE = "SAMPLE" }
+
+[states.SAMPLE]
+entry = "on_sample_entry"
+execute = "on_sample_execute"
+exit = "on_sample_exit"
+on.SAMPLE_DONE = { goto = "PROCESS", action = "action_log_samples" }
+
+[states.PROCESS]
+entry = "on_process_entry"
+execute = "on_process_execute"
+exit = "on_process_exit"
+allow_drop = ["PROCESS_DONE"]
+on.PROCESS_DONE = { goto = "TRANSMIT", if = "guard_data_valid" }
+on.START_SAMPLE = "IDLE"    # abort / restart
+
+[states.TRANSMIT]
+entry = "on_transmit_entry"
+execute = "on_transmit_execute"
+exit = "on_transmit_exit"
+on = { TX_DONE = "IDLE" }

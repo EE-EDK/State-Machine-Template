@@ -11,14 +11,14 @@
  *   - SM_Init / SM_Process / SM_PostEvent handle-based calls
  *
  * States: INIT -> RUNNING -> STOPPED
- * Events: EVT_START, EVT_STOP, EVT_TICK
+ * Events: EVT_START, EVT_STOP
  */
 
 /* --- Application configuration (must come before framework headers) --- */
 
 /* REQUIRED: tell the framework how many states and events we have */
 #define SM_STATE_COUNT    (3U)
-#define SM_EVENT_COUNT    (3U)
+#define SM_EVENT_COUNT    (2U)
 
 /* Optional: override non-struct-sizing defaults.
  * NOTE: Do NOT override SM_EVENT_QUEUE_SIZE here when linking against a
@@ -43,9 +43,8 @@ typedef enum {
 
 typedef enum {
     EVT_START = 0,
-    EVT_STOP,
-    EVT_TICK
-    /* SM_EVENT_COUNT = 3 defined above */
+    EVT_STOP
+    /* SM_EVENT_COUNT = 2 defined above */
 } AppEvent_t;
 
 /* =============================================================================
