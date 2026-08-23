@@ -34,7 +34,8 @@ class RepoInvariants(unittest.TestCase):
     def test_current_state_writers_are_exactly_three(self):
         writers = {short(k) for k, f in self.g.functions.items()
                    if f.unit == "lib" and "SM_Context.current_state" in f.writes}
-        self.assertEqual(writers, {"SM_Init", "SM_Reset",
+        # SM_Init is a macro over SM_Init_ since v4.1 (build-dimension check)
+        self.assertEqual(writers, {"SM_Init_", "SM_Reset",
                                    "sm_execute_transition"})
 
     def test_isr_contracts_documented(self):

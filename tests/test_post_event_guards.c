@@ -2,7 +2,8 @@
  * @file test_post_event_guards.c
  * @brief SM_PostEvent parameter and state guards
  *
- * Contract (test 1): posting disallowed event index fails.
+ * Contract (test 1): posting a disallowed event index fails, and the
+ * reserved SM_EVT_TIMEOUT id (v4.1: fixed 0xFFFF) is never postable.
  */
 #include "unity.h"
 #include "sm_framework/sm_framework.h"
@@ -43,6 +44,24 @@ void tearDown(void)
 void test_post_contract_rejects_event_out_of_range(void)
 {
     TEST_ASSERT_FALSE(SM_PostEvent(s_sm, (uint16_t)SM_EVENT_COUNT, 0U));
+}
+
+/* v4.1: SM_EVT_TIMEOUT is a FIXED reserved id, not SM_EVENT_COUNT. Pinning
+ * the value here is the point: if it ever becomes a function of the event
+ * count again, a pre-compiled library and its application disagree about
+ * which id the engine posts and every timeout route silently dies. */
+void test_post_timeout_id_is_reserved_and_count_independent(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFU, SM_EVT_TIMEOUT);
+    TEST_ASSERT_NOT_EQUAL_UINT16((uint16_t)SM_EVENT_COUNT, SM_EVT_TIMEOUT);
+}
+
+/* The engine-only signal must never be postable by application code. */
+void test_post_contract_rejects_reserved_timeout_event(void)
+{
+    SM_EventQueueFlush(s_sm);
+    TEST_ASSERT_FALSE(SM_PostEvent(s_sm, SM_EVT_TIMEOUT, 0U));
+    TEST_ASSERT_TRUE(SM_EventQueueIsEmpty(s_sm));
 }
 
 void test_post_false_for_null_sm(void)
@@ -104,6 +123,8 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_post_contract_rejects_event_out_of_range);
+    RUN_TEST(test_post_timeout_id_is_reserved_and_count_independent);
+    RUN_TEST(test_post_contract_rejects_reserved_timeout_event);
     RUN_TEST(test_post_false_for_null_sm);
     RUN_TEST(test_post_false_when_not_initialized);
     RUN_TEST(test_post_true_front_slot_first_event);

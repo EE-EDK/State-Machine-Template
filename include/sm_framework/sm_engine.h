@@ -1,7 +1,7 @@
 /**
  * @file sm_engine.h
  * @brief Core state machine engine API for v3.0
- * @version 3.0.0
+ * @version 4.1.0
  * @date 2026-04-18
  *
  * @copyright Copyright (c) 2025-2026
@@ -38,7 +38,24 @@ extern "C" {
  * @note config->states array must have exactly SM_STATE_COUNT entries.
  * @note config pointer is stored (not copied) -- must remain valid.
  */
-bool SM_Init(SM_Handle_t sm, const SM_Config_t *config);
+bool SM_Init_(SM_Handle_t sm, const SM_Config_t *config,
+              uint16_t app_state_count, uint16_t app_event_count);
+
+/**
+ * @brief Initialize a state machine instance (build-consistency checked)
+ *
+ * SM_Init is a macro so the APPLICATION's compile-time dimensions travel with
+ * the call and can be compared against the ones the framework itself was
+ * compiled with. They must match: the library's copies drive SM_Init's
+ * initial-state check, SM_PostEvent's accept range and (with statistics on)
+ * SM_Context_t's layout. A mismatch fires assertion 105 and returns false
+ * instead of failing silently at some later, unrelated call.
+ *
+ * Set the dimensions once for the whole build (see CMakeLists.txt); do not
+ * re-#define them in application sources.
+ */
+#define SM_Init(sm_, config_) \
+    SM_Init_((sm_), (config_), (uint16_t)(SM_STATE_COUNT), (uint16_t)(SM_EVENT_COUNT))
 
 /**
  * @brief Process one iteration of the state machine

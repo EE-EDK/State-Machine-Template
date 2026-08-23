@@ -1,7 +1,7 @@
 /**
  * @file sm_safety.h
  * @brief Safety macros: DIS, bounded loops, numeric assertions (v3.0)
- * @version 3.0.0
+ * @version 4.1.0
  * @date 2026-04-18
  *
  * @copyright Copyright (c) 2025-2026

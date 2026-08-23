@@ -1,5 +1,60 @@
 # Migration Guide
 
+# v4.0 to v4.1
+
+## Overview
+
+v4.1 closes a build-consistency defect. v4.0's API is unchanged in shape, but
+two things that used to be *per-translation-unit* are now global to a build,
+because the library and the application were silently disagreeing about them.
+
+The failure v4.1 fixes was reproducible: a library compiled with
+`SM_STATE_COUNT=4 / SM_EVENT_COUNT=8` (as the shipped CMake did) linked
+against an application that defined its own smaller values would (a) reject
+valid initial states in `SM_Init`, (b) accept out-of-range events in
+`SM_PostEvent`, and (c) make **every `SM_EVT_TIMEOUT` transition dead code** —
+the engine posted its own value for the timeout signal while the application's
+table matched on a different one. Every example in this repository carried a
+timeout route that could never fire.
+
+## Breaking changes
+
+1. **`SM_EVT_TIMEOUT` is a fixed reserved id (`0xFFFF`), not `SM_EVENT_COUNT`.**
+   Its value is now identical in every translation unit. User events occupy
+   `0 .. SM_EVENT_COUNT-1` and can never collide with it.
+   - **Action:** none, if you always wrote `SM_EVT_TIMEOUT` symbolically.
+     If you hard-coded the numeric value (it used to equal your event count),
+     replace the literal with the macro.
+   - `SM_EVENT_COUNT`'s upper bound rises from 65534 to 65535, since the
+     reserved id no longer has to sit just above the user range.
+
+2. **`SM_STATE_COUNT` / `SM_EVENT_COUNT` are set once per build, not per file.**
+   They are compile-time constants baked into the compiled framework, so the
+   library and every application linked against it must see the same values.
+   The build now sets them once and propagates them `PUBLIC` through the
+   `sm_framework` target.
+   - **Action:** remove `#define SM_STATE_COUNT` / `#define SM_EVENT_COUNT`
+     (and any other layout macro such as `SM_EVENT_QUEUE_SIZE`) from your
+     application sources. Set them in your CMake configuration instead:
+     `cmake -DSM_STATE_COUNT=12 -DSM_EVENT_COUNT=24 ..`, or edit the cache
+     variables at the top of `CMakeLists.txt`. If you consume the framework
+     via `add_subdirectory`, linking `sm_framework` is enough to inherit them.
+   - Your own state/event enums stay as small as you like — the build-wide
+     values are a ceiling, not an exact size.
+
+3. **`SM_Init` is now a macro over `SM_Init_`.**
+   The macro forwards the *application's* compile-time dimensions so the
+   library can compare them with its own. A mismatch fires assertion 105/106
+   and returns `false` instead of failing silently later.
+   - **Action:** none for ordinary calls. Code that took `&SM_Init` (a
+     function pointer) must use `&SM_Init_` and pass the dimensions itself.
+
+## Not changed
+
+Engine execution semantics, the event queue, timers, deferred events, the
+error handler and the HAL are untouched. All six examples produce
+byte-identical output to v4.0, and the 21 C test suites pass unmodified.
+
 # v3.0 to v4.0
 
 ## Overview

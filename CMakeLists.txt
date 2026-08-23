@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 
 project(StateMachineFramework
-    VERSION 3.0.0
+    VERSION 4.1.0
     DESCRIPTION "Modular State Machine Framework for Embedded Systems"
     LANGUAGES C
 )
@@ -19,6 +19,30 @@ endif()
 # Options
 option(BUILD_EXAMPLES "Build example applications" ON)
 option(BUILD_TESTS "Build unit tests" OFF)
+
+# =============================================================================
+# APPLICATION DIMENSIONS -- one value per build, shared by library and apps
+#
+# SM_STATE_COUNT / SM_EVENT_COUNT are compile-time constants baked into the
+# compiled library: they drive SM_Init's initial-state range check,
+# SM_PostEvent's accept range, and the SM_Stats_t per-state array (so they
+# also change SM_Context_t's layout when SM_FEATURE_STATISTICS is on).
+#
+# v4.1: they are set ONCE here and propagated PUBLIC to every target that
+# links sm_framework, so the library and its applications cannot disagree.
+# Before v4.1 the library was compiled with fixed values while each example
+# re-#defined its own -- the two silently diverged, and SM_Init would reject
+# valid initial states while SM_PostEvent accepted out-of-range events.
+# Applications must NOT re-#define these in their sources; set them here (or
+# via -DSM_STATE_COUNT=... at configure time) for the whole build.
+# =============================================================================
+set(SM_STATE_COUNT "4" CACHE STRING "Number of application states (1..255)")
+set(SM_EVENT_COUNT "8" CACHE STRING "Number of application events (1..65535)")
+
+set(SM_DIMENSION_DEFS
+    SM_STATE_COUNT=${SM_STATE_COUNT}U
+    SM_EVENT_COUNT=${SM_EVENT_COUNT}U
+)
 
 # Platform selection (default to simulation)
 set(SM_PLATFORM "SIMULATION" CACHE STRING "Target platform (SIMULATION, STM32, ESP32, RP2040, CUSTOM)")
@@ -74,10 +98,7 @@ target_include_directories(sm_platform_defaults PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_compile_definitions(sm_platform_defaults PRIVATE
-    SM_STATE_COUNT=4U
-    SM_EVENT_COUNT=8U
-)
+target_compile_definitions(sm_platform_defaults PUBLIC ${SM_DIMENSION_DEFS})
 
 # Core framework (without platform layer)
 add_library(sm_framework STATIC
@@ -91,14 +112,12 @@ target_include_directories(sm_framework PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# The library requires SM_STATE_COUNT and SM_EVENT_COUNT at compile time
-# (they size arrays in sm_types.h). Provide defaults for library compilation.
-# Examples and user projects override these with their own values via
-# #define in their source before #include "sm_framework/sm_framework.h".
-target_compile_definitions(sm_framework PRIVATE
-    SM_STATE_COUNT=4U
-    SM_EVENT_COUNT=8U
-)
+# PUBLIC, not PRIVATE: every target that links sm_framework compiles with the
+# SAME dimensions as the library itself (see the block near the top of this
+# file). SM_Init additionally verifies this at runtime -- a consumer built
+# against an installed archive with different values is rejected instead of
+# silently misbehaving.
+target_compile_definitions(sm_framework PUBLIC ${SM_DIMENSION_DEFS})
 
 # Link platform defaults so downstream targets get them automatically.
 # Users who provide their own platform can link sm_framework without

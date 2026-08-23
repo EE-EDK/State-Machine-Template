@@ -1,7 +1,7 @@
 /**
  * @file simulation_example.c
  * @brief Simulation example with real timing (v3.0)
- * @version 3.0.0
+ * @version 4.1.0
  * @date 2026-04-18
  *
  * Demonstrates:
@@ -14,9 +14,16 @@
 #define _POSIX_C_SOURCE 199309L
 
 /* --- Application configuration --- */
-#define SM_STATE_COUNT    (3U)
-#define SM_EVENT_COUNT    (4U)
-#define SM_EVENT_QUEUE_SIZE (8U)
+
+/*
+ * SM_STATE_COUNT / SM_EVENT_COUNT / SM_EVENT_QUEUE_SIZE are deliberately NOT
+ * defined here. All three are baked into the framework library at compile
+ * time -- the counts drive SM_Init's and SM_PostEvent's range checks, and the
+ * queue size changes SM_Context_t's layout outright, so an application that
+ * disagrees with the library it links against corrupts the context. The build
+ * sets them once for all targets (see the root CMakeLists.txt); this machine
+ * uses 3 states and 4 events, which must fit the build-wide bounds.
+ */
 #define SM_DEBUG_LEVEL    (3U)
 
 #include "sm_framework/sm_framework.h"

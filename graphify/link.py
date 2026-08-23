@@ -285,9 +285,13 @@ def docs_xref(root: Path, g: Graph,
                 claims.append((fname, int(n), actual))
 
     user_docs = ("README.md", "Quick-Guide.md")
+    # A trailing underscore marks an internal entry point in this codebase
+    # (SM_TimeEvt_Tick_, SM_Init_): the documented surface is the macro or
+    # wrapper that calls it, so absence from the user docs is by design.
     undocumented = [name for name in api
-                    if not any(mentions.get(name, {}).get(d, 0)
-                               for d in user_docs)]
+                    if not name.endswith("_")
+                    and not any(mentions.get(name, {}).get(d, 0)
+                                for d in user_docs)]
     return DocsReport(docs=doc_paths, mentions=mentions,
                       undocumented_api=undocumented, stale=stale,
                       test_claims=claims, user_docs=user_docs)

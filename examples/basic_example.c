@@ -1,7 +1,7 @@
 /**
  * @file basic_example.c
  * @brief Basic v3.0 example -- minimal 3-state FSM
- * @version 3.0.0
+ * @version 4.1.0
  * @date 2026-04-18
  *
  * Demonstrates the v3.0 API pattern:
@@ -16,9 +16,17 @@
 
 /* --- Application configuration (must come before framework headers) --- */
 
-/* REQUIRED: tell the framework how many states and events we have */
-#define SM_STATE_COUNT    (3U)
-#define SM_EVENT_COUNT    (2U)
+/*
+ * SM_STATE_COUNT / SM_EVENT_COUNT are deliberately NOT defined here.
+ *
+ * They are compile-time constants baked into the framework library, so the
+ * library and every application linked against it must be compiled with
+ * identical values -- the build sets them once for all targets (see the
+ * root CMakeLists.txt). This machine uses 3 states and 2 events,
+ * which must fit inside the build-wide bounds; SM_Init and SM_PostEvent
+ * range-check against those, and SM_Init rejects a mismatched application
+ * outright (v4.1).
+ */
 
 /* Optional: override non-struct-sizing defaults.
  * NOTE: Do NOT override SM_EVENT_QUEUE_SIZE here when linking against a
@@ -38,13 +46,13 @@ typedef enum {
     STATE_INIT = 0,
     STATE_RUNNING,
     STATE_STOPPED
-    /* SM_STATE_COUNT = 3 defined above */
+    /* 3 states -- must fit the build-wide SM_STATE_COUNT */
 } AppState_t;
 
 typedef enum {
     EVT_START = 0,
     EVT_STOP
-    /* SM_EVENT_COUNT = 2 defined above */
+    /* 2 events -- must fit the build-wide SM_EVENT_COUNT */
 } AppEvent_t;
 
 /* =============================================================================

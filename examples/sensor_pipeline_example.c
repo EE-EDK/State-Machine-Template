@@ -1,7 +1,7 @@
 /**
  * @file sensor_pipeline_example.c
  * @brief Sensor pipeline v3.0 example -- guard conditions and transition actions
- * @version 3.0.0
+ * @version 4.1.0
  * @date 2026-04-19
  *
  * Demonstrates the v3.0 guard and action features:
@@ -16,9 +16,17 @@
 
 /* --- Application configuration (must come before framework headers) --- */
 
-/* REQUIRED: tell the framework how many states and events we have */
-#define SM_STATE_COUNT    (4U)
-#define SM_EVENT_COUNT    (4U)
+/*
+ * SM_STATE_COUNT / SM_EVENT_COUNT are deliberately NOT defined here.
+ *
+ * They are compile-time constants baked into the framework library, so the
+ * library and every application linked against it must be compiled with
+ * identical values -- the build sets them once for all targets (see the
+ * root CMakeLists.txt). This machine uses 4 states and 4 events,
+ * which must fit inside the build-wide bounds; SM_Init and SM_PostEvent
+ * range-check against those, and SM_Init rejects a mismatched application
+ * outright (v4.1).
+ */
 
 /* Optional: enable debug output */
 #define SM_DEBUG_LEVEL    (4U)
@@ -35,7 +43,7 @@ typedef enum {
     STATE_SAMPLE,
     STATE_PROCESS,
     STATE_TRANSMIT
-    /* SM_STATE_COUNT = 4 defined above */
+    /* 4 states -- must fit the build-wide SM_STATE_COUNT */
 } PipelineState_t;
 
 typedef enum {
@@ -43,7 +51,7 @@ typedef enum {
     EVT_SAMPLE_DONE,
     EVT_PROCESS_DONE,
     EVT_TX_DONE
-    /* SM_EVENT_COUNT = 4 defined above */
+    /* 4 events -- must fit the build-wide SM_EVENT_COUNT */
 } PipelineEvent_t;
 
 /* =============================================================================

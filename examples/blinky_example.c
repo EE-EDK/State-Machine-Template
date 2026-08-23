@@ -1,7 +1,7 @@
 /**
  * @file blinky_example.c
  * @brief v4.0 example -- LED blinker with periodic time events
- * @version 4.0.0
+ * @version 4.1.0
  * @date 2026-08-03
  *
  * Demonstrates the v4.0 time event API (SM_TimeEvt_*):
@@ -21,9 +21,17 @@
 
 /* --- Application configuration (must come before framework headers) --- */
 
-/* REQUIRED: tell the framework how many states and events we have */
-#define SM_STATE_COUNT    (3U)
-#define SM_EVENT_COUNT    (3U)
+/*
+ * SM_STATE_COUNT / SM_EVENT_COUNT are deliberately NOT defined here.
+ *
+ * They are compile-time constants baked into the framework library, so the
+ * library and every application linked against it must be compiled with
+ * identical values -- the build sets them once for all targets (see the
+ * root CMakeLists.txt). This machine uses 3 states and 3 events,
+ * which must fit inside the build-wide bounds; SM_Init and SM_PostEvent
+ * range-check against those, and SM_Init rejects a mismatched application
+ * outright (v4.1).
+ */
 
 /* Optional: enable verbose debug output for demonstration */
 #define SM_DEBUG_LEVEL        (4U)
@@ -39,14 +47,14 @@ typedef enum {
     STATE_OFF = 0,
     STATE_BLINKING,
     STATE_PAUSED
-    /* SM_STATE_COUNT = 3 defined above */
+    /* 3 states -- must fit the build-wide SM_STATE_COUNT */
 } AppState_t;
 
 typedef enum {
     EVT_TOGGLE = 0,
     EVT_BLINK_TICK,
     EVT_PAUSE
-    /* SM_EVENT_COUNT = 3 defined above */
+    /* 3 events -- must fit the build-wide SM_EVENT_COUNT */
 } AppEvent_t;
 
 /* =============================================================================

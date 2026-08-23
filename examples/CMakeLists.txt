@@ -1,13 +1,15 @@
-# Examples for State Machine Framework v3.0
+# Examples for State Machine Framework v4.1
 #
-# Each example defines SM_STATE_COUNT and SM_EVENT_COUNT in its source via
-# #define before #include "sm_framework/sm_framework.h". These override the
-# #ifndef defaults because the #define in the .c file occurs before the header
-# include chain.
+# Examples do NOT define SM_STATE_COUNT / SM_EVENT_COUNT themselves. Those are
+# compile-time constants baked into the sm_framework library, and an
+# application compiled with different values than the library it links against
+# disagrees with it about SM_Init's range check, SM_PostEvent's accept range
+# and (with statistics enabled) SM_Context_t's layout. The root CMakeLists.txt
+# sets them once and propagates them PUBLIC through sm_framework, so linking is
+# enough to inherit the correct values; SM_Init verifies the match at runtime.
 #
-# Note: The library is compiled with default SM_STATE_COUNT/SM_EVENT_COUNT
-# (see root CMakeLists.txt). Struct layouts match as long as SM_FEATURE_STATISTICS
-# is off (default), since SM_STATE_COUNT only sizes the stats array.
+# Each example's own state/event enums are smaller than the build-wide bounds,
+# which is fine -- the bounds are a ceiling, not an exact size.
 
 # Basic example: 3-state FSM
 add_executable(basic_example

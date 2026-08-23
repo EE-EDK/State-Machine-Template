@@ -1,7 +1,7 @@
 /**
  * @file sm_engine.c
  * @brief Core state machine engine implementation (v4.0)
- * @version 4.0.0
+ * @version 4.1.0
  * @date 2026-08-02
  *
  * @copyright Copyright (c) 2025-2026
@@ -40,7 +40,7 @@
  *     this cycle is normally delivered in this same cycle.
  *
  * Assertion ID ranges (sm_engine):
- *   100-199  SM_Init
+ *   100-199  SM_Init (105/106: application vs library build dimensions)
  *   200-299  SM_Process
  *   300-399  Time events
  *   400-499  Deferred events
@@ -345,10 +345,28 @@ static void sm_execute_transition(SM_Handle_t sm, const SM_Transition_t *trans,
  * LIFECYCLE
  * ===========================================================================*/
 
-bool SM_Init(SM_Handle_t sm, const SM_Config_t *config)
+bool SM_Init_(SM_Handle_t sm, const SM_Config_t *config,
+              uint16_t app_state_count, uint16_t app_event_count)
 {
     SM_REQUIRE(100, sm != NULL);
     SM_REQUIRE(101, config != NULL);
+
+    /* Build consistency (v4.1): the caller's compile-time dimensions must
+     * equal the ones this library was compiled with. They are not merely a
+     * convention -- the checks below, SM_PostEvent's accept range and the
+     * statistics array all use the LIBRARY's copies, so a mismatched
+     * application would be range-checked against numbers it never saw. */
+    SM_REQUIRE(105, app_state_count == (uint16_t)SM_STATE_COUNT);
+    SM_REQUIRE(106, app_event_count == (uint16_t)SM_EVENT_COUNT);
+
+    if (app_state_count != (uint16_t)SM_STATE_COUNT ||
+        app_event_count != (uint16_t)SM_EVENT_COUNT) {
+        SM_LOG_ERROR("SM_Init: build mismatch -- app has %u states/%u events, "
+                     "library was built with %u/%u",
+                     (unsigned)app_state_count, (unsigned)app_event_count,
+                     (unsigned)SM_STATE_COUNT, (unsigned)SM_EVENT_COUNT);
+        return false;
+    }
 
     if (sm == NULL || config == NULL) {
         return false;

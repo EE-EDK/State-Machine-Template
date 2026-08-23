@@ -1,7 +1,7 @@
 /**
  * @file error_recovery_example.c
  * @brief Error recovery example -- 3-tier error handling system (v3.0)
- * @version 3.0.0
+ * @version 4.1.0
  * @date 2026-04-19
  *
  * Demonstrates the v3.0 error handling subsystem:
@@ -26,8 +26,16 @@
 
 /* --- Application configuration (must come before framework headers) --- */
 
-#define SM_STATE_COUNT    (3U)
-#define SM_EVENT_COUNT    (4U)
+/*
+ * SM_STATE_COUNT / SM_EVENT_COUNT are deliberately NOT defined here.
+ *
+ * They are compile-time constants baked into the framework library, so the
+ * library and every application linked against it must be compiled with
+ * identical values -- the build sets them once for all targets (see the
+ * root CMakeLists.txt). This machine uses 3 states and 4 events, which must
+ * fit inside the build-wide bounds; SM_Init and SM_PostEvent range-check
+ * against those, and SM_Init rejects a mismatched application outright (v4.1).
+ */
 #define SM_DEBUG_LEVEL    (4U)
 
 #include "sm_framework/sm_framework.h"

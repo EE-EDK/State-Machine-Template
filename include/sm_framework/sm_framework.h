@@ -1,7 +1,7 @@
 /**
  * @file sm_framework.h
- * @brief Umbrella header for State Machine Framework v3.0
- * @version 3.0.0
+ * @brief Umbrella header for State Machine Framework v4.1
+ * @version 4.1.0
  * @date 2026-04-18
  *
  * @copyright Copyright (c) 2025-2026
@@ -22,9 +22,9 @@ extern "C" {
  * ===========================================================================*/
 
 #define SM_FRAMEWORK_VERSION_MAJOR  (4)
-#define SM_FRAMEWORK_VERSION_MINOR  (0)
+#define SM_FRAMEWORK_VERSION_MINOR  (1)
 #define SM_FRAMEWORK_VERSION_PATCH  (0)
-#define SM_FRAMEWORK_VERSION_STRING "4.0.0"
+#define SM_FRAMEWORK_VERSION_STRING "4.1.0"
 
 /* =============================================================================
  * FRAMEWORK HEADERS (order matters)

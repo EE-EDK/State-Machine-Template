@@ -1,7 +1,7 @@
 /**
  * @file sm_config_template.h
- * @brief User configuration template for State Machine Framework v3.0
- * @version 3.0.0
+ * @brief User configuration template for State Machine Framework v4.1
+ * @version 4.1.0
  * @date 2026-04-18
  *
  * Copy this file to your project as "app_config.h" and customize the values.

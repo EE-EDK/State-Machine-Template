@@ -1,7 +1,7 @@
 /**
  * @file sm_error.c
  * @brief Error handler implementation (v3.0 Phase 3)
- * @version 3.0.0
+ * @version 4.1.0
  * @date 2026-04-19
  *
  * @copyright Copyright (c) 2025-2026

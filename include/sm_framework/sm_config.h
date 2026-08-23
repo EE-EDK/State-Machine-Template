@@ -1,7 +1,7 @@
 /**
  * @file sm_config.h
- * @brief Configuration defaults for State Machine Framework v3.0
- * @version 3.0.0
+ * @brief Configuration defaults for State Machine Framework v4.1
+ * @version 4.1.0
  * @date 2026-04-18
  *
  * @copyright Copyright (c) 2025-2026

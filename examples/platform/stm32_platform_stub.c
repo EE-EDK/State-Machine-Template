@@ -1,7 +1,7 @@
 /**
  * @file stm32_platform_stub.c
- * @brief STM32 HAL platform implementation for State Machine Framework v3.0
- * @version 3.0.0
+ * @brief STM32 HAL platform implementation for State Machine Framework v4.1
+ * @version 4.1.0
  * @date 2026-04-19
  *
  * @copyright Copyright (c) 2025-2026

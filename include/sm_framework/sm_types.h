@@ -1,7 +1,7 @@
 /**
  * @file sm_types.h
- * @brief All type definitions for State Machine Framework v3.0
- * @version 3.0.0
+ * @brief All type definitions for State Machine Framework v4.1
+ * @version 4.1.0
  * @date 2026-04-18
  *
  * @copyright Copyright (c) 2025-2026
@@ -52,8 +52,8 @@ SM_STATIC_ASSERT(SM_EVENT_QUEUE_SIZE > 0 && SM_EVENT_QUEUE_SIZE <= 64,
 SM_STATIC_ASSERT(SM_STATE_COUNT > 0 && SM_STATE_COUNT <= 255,
     "SM_STATE_COUNT must be between 1 and 255");
 
-SM_STATIC_ASSERT(SM_EVENT_COUNT > 0 && SM_EVENT_COUNT <= 65534,
-    "SM_EVENT_COUNT must be between 1 and 65534 (SM_EVT_TIMEOUT occupies SM_EVENT_COUNT)");
+SM_STATIC_ASSERT(SM_EVENT_COUNT > 0 && SM_EVENT_COUNT <= 65535,
+    "SM_EVENT_COUNT must be between 1 and 65535 (0xFFFF is reserved for SM_EVT_TIMEOUT)");
 
 SM_STATIC_ASSERT(SM_MAX_EVENTS_PER_PROCESS > 0,
     "SM_MAX_EVENTS_PER_PROCESS must be >= 1");
@@ -107,21 +107,29 @@ typedef SM_Context_t *SM_Handle_t;
 /**
  * @brief State-timeout event (framework-defined, public since v4.0)
  *
- * Posted by the engine when a state's timeout_ms elapses. Sits one above the
- * user event range so it can never collide with application events. Use it
- * directly in transition tables:
+ * Posted by the engine when a state's timeout_ms elapses. Use it directly in
+ * transition tables:
  *
  *   { STATE_WAITING, SM_EVT_TIMEOUT, STATE_FAULT, 0, NULL, NULL }
  *
  * SM_PostEvent rejects it (engine-only signal); SM_AddTransition accepts it.
+ *
+ * v4.1: this is a FIXED reserved identifier (0xFFFF), not a function of
+ * SM_EVENT_COUNT, so it has the same value in every translation unit.
+ * v4.0 defined it as SM_EVENT_COUNT, which silently disagreed whenever the
+ * framework was compiled with different counts than the application (the
+ * usual case with a pre-compiled library): the engine posted ITS value while
+ * the application's table matched on ITS OWN, so every SM_EVT_TIMEOUT route
+ * was dead code. User events therefore occupy 0..SM_EVENT_COUNT-1 and can
+ * never collide with the reserved id.
  */
-#define SM_EVT_TIMEOUT  ((uint16_t)(SM_EVENT_COUNT))
+#define SM_EVT_TIMEOUT  ((uint16_t)0xFFFFU)
 
 /**
  * @brief Event item stored in the ring buffer
  *
  * 8 bytes on 32-bit ARM (with explicit padding).
- * event is uint16_t to support up to 65534 user-defined events.
+ * event is uint16_t to support up to 65535 user-defined events (0xFFFF reserved).
  * data is a uint32_t payload carried with every event.
  */
 typedef struct {
