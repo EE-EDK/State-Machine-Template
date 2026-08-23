@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .analyze import COMMENT_RE
+from .cparse import COMMENT_RE
 
 TIMEOUT_NAMES = {"SM_EVT_TIMEOUT", "SM_EVENT_COUNT"}
 

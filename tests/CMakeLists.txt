@@ -101,6 +101,12 @@ if(Python3_Interpreter_FOUND AND NOT Python3_VERSION VERSION_LESS "3.11")
                      ${CMAKE_SOURCE_DIR}/models/basic.toml
                      ${CMAKE_SOURCE_DIR}/models/sensor_pipeline.toml
              WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    # graphify: extractor unit tests + real-repo invariants (state writer
+    # set, ISR contracts, model round-trip, no call cycles, G-check plumbing)
+    add_test(NAME test_graphify_unit
+             COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                     -s ${CMAKE_SOURCE_DIR}/graphify/tests -t ${CMAKE_SOURCE_DIR}
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 
 add_sm_test(test_rt_transition    test_rt_transition.c)

@@ -42,7 +42,16 @@ state-machine-template/
 │   └── progress.md         # Session log
 ├── smgen/                  # Model compiler (B1: schema+validator+CLI, stdlib-only)
 ├── models/                 # TOML machine models (blinky, basic, sensor_pipeline)
-├── graphify/               # Code+machine knowledge-graph generator (stdlib-only)
+├── graphify/               # v2 typed knowledge-graph generator (stdlib-only)
+│   ├── cparse.py           # Length-preserving C text utils + preprocessor gate map
+│   ├── analyze.py          # Functions/decls/macros(variants)/types(fields)/config/assertions; scoped call resolution
+│   ├── machines.py         # SM_Config_t/SM_Transition_t/SM_StateDesc_t -> state graphs + V1-V5
+│   ├── link.py             # machine<->code bindings, models<->examples round-trip, docs<->API, test inventory
+│   ├── pytools.py          # smgen/graphify Python module graph (ast)
+│   ├── metrics.py          # betweenness, PageRank, SCC, articulation, label propagation, layers, bow-tie
+│   ├── render.py           # GRAPH_REPORT.md (G1-G14 validators), wiki, graph.json, graph.html
+│   ├── watch.py            # Orchestration -- the public contract
+│   └── tests/              # 27 unittest cases (synthetic fixtures + real-repo invariants), in ctest
 ├── tests/
 │   ├── CMakeLists.txt          # Test build system (Unity FetchContent, sm_framework_test lib)
 │   ├── test_common.h           # Shared test enums, assert-capture macros
@@ -170,9 +179,11 @@ the repo-local `graphify/` Python package (stdlib-only, committed with the
 repo — works in any clone, no install needed).
 
 Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md. v2 (2026-08-22) sections: G-check validator findings (G1 duplicate assertion IDs, G3 no SM_DEFINE_MODULE, G4 unbalanced critsec, G5 ISR-contract violations, G6 call cycles, G7 untested API, G8 undocumented/stale docs + CLAUDE.md test-count claims, G9 model↔example round-trip, G10 feature flags never compiled under test, G11 unreached callbacks, G12 never-overridden weak HAL, G13 articulation points, G14 volatile writes outside critical sections), topology (bow-tie, layers, SCCs, articulation points, degree signature), god nodes with betweenness/PageRank, interface layer (decl → weak/override implementations), feature gates, config macros, **state access matrix** (writers/readers per `SM_Context` field), critical sections + documented ISR contracts, assertion map, macro expansion map, machine↔code callback bindings, test inventory / API coverage, docs cross-reference, models↔examples round-trip, Python tooling, directory + structural communities
 - For questions about a specific state machine (states, transitions, timeouts), read graphify-out/MACHINES.md — per-machine Mermaid diagrams, timing tables, and validator findings (V1 unreachable states, V2 timeout without SM_EVT_TIMEOUT route, V3 dwell>timeout, V4 terminal states, V5 fully-guarded events). Application machines and test fixtures are listed separately; only application WARNs matter
 - If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` (or `python3 -m graphify.watch`) from the repo root to keep the graph current
+- graphify-out/graph.json is the typed node/edge/metrics/findings export for downstream tools; graphify-out/graph.html is a self-contained interactive viewer (open in a browser; filter by node/edge kind, color by community/layer)
+- After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` (or `python3 -m graphify.watch`) from the repo root to keep the graph current. Run from the repo root: a workspace-level `graphify` package in site-packages shadows this one otherwise
 - graphify-out/ stays gitignored (ephemeral, regenerable output)
-- Planned: swap the regex extraction layer for a clang/libclang AST analyzer (see TODO) — same output format and rebuild contract, higher precision
+- `ctest` runs `test_graphify_unit` (graphify/tests: extractor fixtures + real-repo invariants such as the single-writer set for `SM_Context.current_state`, ISR contracts, model round-trip MATCH, no call cycles) — a checker nobody has tested is a checker nobody should trust
+- Planned: swap the regex extraction layer (cparse.py + analyze.py only) for a clang/libclang AST analyzer (see TODO) — the dataclasses, graph.json and report format are the stable contract
