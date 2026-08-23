@@ -338,6 +338,24 @@ def _validate(m: Machine) -> None:
                 "INFO", "V5-all-guarded",
                 f"every transition for ({frm}, {evt}) is guarded -- the "
                 f"event is discarded when all guards return false"))
+        # V6: an unguarded row shadows every later row for the same pair
+        # (the engine returns the first row whose guard passes, in order)
+        for i, r in enumerate(rows):
+            if r.guard is None and i < len(rows) - 1:
+                m.findings.append((
+                    "WARN", "V6-shadowed-row",
+                    f"({frm}, {evt}): row {i} is unguarded, so "
+                    f"{len(rows) - 1 - i} later row(s) can never be taken"))
+                break
+        # V7: duplicate exact rows
+        seen: set[tuple] = set()
+        for r in rows:
+            key = (r.to_state, r.guard, r.action)
+            if key in seen:
+                m.findings.append((
+                    "WARN", "V7-duplicate-row",
+                    f"({frm}, {evt}): duplicate row -> {r.to_state}"))
+            seen.add(key)
 
 
 def _short_event(event: str) -> str:

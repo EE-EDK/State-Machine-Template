@@ -336,3 +336,87 @@ def test_inventory(root: Path, g: Graph) -> TestInventory:
     uncovered = sorted(n for n in api_names if not by_name_test[n])
     return TestInventory(run_tests=run_tests, api_test_files=by_name_test,
                          api_example_files=by_name_ex, uncovered_api=uncovered)
+
+
+# ----------------------------------------------------------------------
+# Library <-> application compile-time configuration (ABI) consistency
+# ----------------------------------------------------------------------
+
+LAYOUT_MACROS = ("SM_STATE_COUNT", "SM_EVENT_COUNT", "SM_EVENT_QUEUE_SIZE",
+                 "SM_ERROR_HISTORY_SIZE", "SM_STATE_HISTORY_DEPTH",
+                 "SM_MAX_TRANSITIONS", "SM_DEFER_QUEUE_SIZE",
+                 "SM_FEATURE_HSM", "SM_FEATURE_RUNTIME_TRANSITIONS",
+                 "SM_FEATURE_STATISTICS", "SM_FEATURE_TIME_EVENTS",
+                 "SM_FEATURE_DEFER")
+CMAKE_DEFS_RE = re.compile(
+    r"target_compile_definitions\(\s*sm_framework\s+PRIVATE([^)]*)\)", re.S)
+CMAKE_KV_RE = re.compile(r"(SM_\w+)=\(?(\d+)U?\)?")
+APP_DEF_RE = re.compile(r"^\s*#\s*define\s+(SM_\w+)\s+\(?\s*(\d+)U?\s*\)?",
+                        re.M)
+
+
+@dataclass
+class AbiIssue:
+    severity: str
+    file: str
+    message: str
+
+
+def abi_check(root: Path, g: Graph) -> list[AbiIssue]:
+    """Compare the values the prebuilt library was compiled with against
+    the values each example translation unit defines before including the
+    framework. SM_STATE_COUNT / SM_EVENT_COUNT are baked into the library
+    (range checks, SM_EVT_TIMEOUT) and the other macros change the
+    SM_Context_t layout, so any divergence is a real ABI defect."""
+    cm = root / "CMakeLists.txt"
+    if not cm.is_file():
+        return []
+    m = CMAKE_DEFS_RE.search(cm.read_text(encoding="utf-8", errors="replace"))
+    if not m:
+        return []
+    lib: dict[str, int] = {k: int(v) for k, v in CMAKE_KV_RE.findall(m.group(1))}
+    for name, c in g.configs.items():
+        if name in LAYOUT_MACROS and name not in lib:
+            try:
+                lib[name] = int(c.default, 0)
+            except ValueError:
+                pass
+    out: list[AbiIssue] = []
+    for rel in g.files:
+        if not (rel.startswith("examples/") and rel.endswith(".c")) or \
+                rel.startswith("examples/platform/"):
+            continue
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        app = {k: int(v) for k, v in APP_DEF_RE.findall(text)}
+        uses_timeout = "SM_EVT_TIMEOUT" in strip_noise(text)
+        for name in LAYOUT_MACROS:
+            if name not in app or name not in lib:
+                continue
+            a, l = app[name], lib[name]
+            if a == l:
+                continue
+            if name == "SM_STATE_COUNT":
+                if a > l:
+                    out.append(AbiIssue("ERROR", rel,
+                        f"declares {a} states but the library was built with "
+                        f"SM_STATE_COUNT={l}: states >= {l} fail SM_Init "
+                        f"(SM_REQUIRE 104) or sm_get_state_desc"))
+                else:
+                    out.append(AbiIssue("INFO", rel,
+                        f"SM_STATE_COUNT={a} < library {l}: library range "
+                        f"checks are looser than the app's enum"))
+            elif name == "SM_EVENT_COUNT":
+                msg = (f"SM_EVENT_COUNT={a} but the library was built with "
+                       f"{l}: SM_PostEvent accepts ids < {l}, and the engine "
+                       f"posts SM_EVT_TIMEOUT={l} while this TU's tables use "
+                       f"SM_EVT_TIMEOUT={a}")
+                if uses_timeout:
+                    out.append(AbiIssue("ERROR", rel, msg +
+                        " -- every SM_EVT_TIMEOUT route here is dead"))
+                else:
+                    out.append(AbiIssue("WARN", rel, msg))
+            else:
+                out.append(AbiIssue("ERROR", rel,
+                    f"{name}={a} differs from the library's {l}: "
+                    f"SM_Context_t layout differs between app and library"))
+    return out

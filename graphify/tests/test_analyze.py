@@ -240,3 +240,64 @@ class AnalyzeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LinkChecksTests(unittest.TestCase):
+    """G15 (library vs app compile-time config) and V6/V7 (row shadowing)."""
+
+    def test_abi_check_flags_count_and_layout_divergence(self):
+        from graphify.link import abi_check
+        root = _repo({
+            "CMakeLists.txt": """
+                add_library(sm_framework STATIC src/core/e.c)
+                target_compile_definitions(sm_framework PRIVATE
+                    SM_STATE_COUNT=4U
+                    SM_EVENT_COUNT=8U
+                )
+            """,
+            "include/t.h": HEADER.replace("SM_QUEUE_SIZE", "SM_EVENT_QUEUE_SIZE"),
+            "src/core/e.c": ENGINE,
+            "examples/big_example.c": """
+                #define SM_STATE_COUNT (6U)
+                #define SM_EVENT_COUNT (2U)
+                #define SM_EVENT_QUEUE_SIZE (16U)
+                #include "t.h"
+                static const int rows[] = { SM_EVT_TIMEOUT };
+                int main(void) { return rows[0]; }
+            """,
+            "examples/ok_example.c": """
+                #define SM_STATE_COUNT (4U)
+                #define SM_EVENT_COUNT (8U)
+                #include "t.h"
+                int main(void) { return 0; }
+            """,
+        })
+        g = build_graph(root)
+        issues = abi_check(root, g)
+        msgs = {(i.severity, i.file, i.message.split(":")[0]) for i in issues}
+        self.assertIn(("ERROR", "examples/big_example.c", "declares 6 states but the library was built with SM_STATE_COUNT=4"), msgs)
+        self.assertTrue(any(i.file == "examples/big_example.c" and "route here is dead" in i.message and i.severity == "ERROR" for i in issues))
+        self.assertTrue(any(i.file == "examples/big_example.c" and "SM_EVENT_QUEUE_SIZE=16" in i.message for i in issues))
+        self.assertFalse(any(i.file == "examples/ok_example.c" for i in issues))
+
+    def test_v6_v7_row_shadowing(self):
+        from graphify.machines import extract_machines
+        root = _repo({
+            "examples/m.c": """
+                enum { S0 = 0, S1, S2 };
+                enum { E0 = 0 };
+                static const SM_StateDesc_t st[3] = { {0}, {0}, {0} };
+                static const SM_Transition_t rows[] = {
+                    { S0, E0, S1, 0, NULL, NULL },
+                    { S0, E0, S2, 0, g, NULL },
+                    { S1, E0, S2, 0, NULL, NULL },
+                    { S1, E0, S2, 0, NULL, NULL },
+                };
+                static const SM_Config_t cfg = { st, rows, 4, S0 };
+            """,
+        })
+        ms = extract_machines(root, ["examples/m.c"])
+        self.assertEqual(len(ms), 1)
+        checks = {c for _, c, _ in ms[0].findings}
+        self.assertIn("V6-shadowed-row", checks)
+        self.assertIn("V7-duplicate-row", checks)

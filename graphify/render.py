@@ -11,7 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from .analyze import Graph, Function
-from .link import Binding, DocsReport, ModelCheck, TestInventory
+from .link import AbiIssue, Binding, DocsReport, ModelCheck, TestInventory
 from .machines import Machine
 from .metrics import (Adj, articulation_points, betweenness, bowtie,
                       clustering, label_propagation, layers, modularity,
@@ -55,6 +55,7 @@ class Analysis:
     cc: float = 0.0
     tie: dict[str, set[str]] = field(default_factory=dict)
     test_defs: dict[str, str] = field(default_factory=dict)
+    abi: list[AbiIssue] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
 
 
@@ -69,10 +70,11 @@ def _file_of(key: str) -> str:
 def analyze(g: Graph, machines: list[Machine], bindings: list[Binding],
             model_checks: list[ModelCheck], docs: DocsReport,
             tests: TestInventory, pyg: PyGraph,
-            test_defs: dict[str, str] | None = None) -> Analysis:
+            test_defs: dict[str, str] | None = None,
+            abi: list[AbiIssue] | None = None) -> Analysis:
     a = Analysis(g=g, machines=machines, bindings=bindings,
                  model_checks=model_checks, docs=docs, tests=tests, pyg=pyg,
-                 test_defs=dict(test_defs or {}))
+                 test_defs=dict(test_defs or {}), abi=list(abi or []))
 
     # Direct call graph over function definitions (decl targets dropped)
     adj: Adj = {k: set() for k in g.functions}
@@ -234,6 +236,10 @@ def _validate(a: Analysis) -> list[Finding]:
                                f"{cond}=0 in tests/CMakeLists.txt; never "
                                f"compiled under test: "
                                f"{', '.join(sorted(set(fns)))}"))
+    # G15 library vs application compile-time configuration (ABI)
+    for issue in a.abi:
+        out.append(Finding(issue.severity, "G15-abi-mismatch",
+                           f"`{issue.file}` {issue.message}"))
     # G14 volatile field written outside any critical section (library)
     for fn in sorted(g.functions.values(), key=lambda f: (f.file, f.line)):
         if fn.unit == "lib" and fn.unprotected_volatile:

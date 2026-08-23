@@ -153,7 +153,9 @@ Maintenance items:
 
 ## Session Continuity
 
-**Last session:** v4.0.0 semantic release + graphify (code + machine graphs, validator) + Phase B plan (this session's commits)
+**Last session:** 2026-08-22 — graphify v2 typed graph + full "perfect state machine" review; findings (not a plan) in `docs_dev/review_findings_2026-08-22.md`
+
+**2026-08-22 — graphify v2 + review findings:** graphify rewritten as a typed knowledge graph (scoped call resolution, macro variants, struct-field read/write edges, critical-section spans, ISR contracts, machine↔code bindings, model round-trip, docs xref, metrics, G1–G15 validators, `graph.html` viewer; 29 unit tests in ctest). Review produced `docs_dev/review_findings_2026-08-22.md` — ~90 tagged findings/ideas across engine, timers, error/safety, API/ABI, debug, memory, tests, docs, build, smgen/graphify, workspace consumers, topology. Headline verified defects: the prebuilt library bakes `SM_STATE_COUNT=4U/SM_EVENT_COUNT=8U` so apps with more states assert in `SM_Init` and every example's `SM_EVT_TIMEOUT` route is dead (G15); field+DIS-shadow two-store races vs ISR-safe readers (G14); armed timers survive `SM_Reset`; `SM_TimeEvt_Init` on an armed timer truncates the list; measured Cortex-M4 `sizeof(SM_Context_t)`=316 B vs documented ~544. The Opus/Sonnet review fleet was blocked by the account spend limit — its workflow script is saved and resumable (see memory). **Next:** turn the findings list into a plan (user's call on ordering).
 
 **2026-08-03 (later still) — machine graphs + Phase B plan:** graphify gained machine-level extraction (`graphify/machines.py`): per-machine Mermaid diagrams + V1–V5 validator in graphify-out/MACHINES.md; first run caught basic_example's dead 5s timeout (fixed: SM_EVT_TIMEOUT failsafe route + SimTick). Phase B planned in `docs_dev/phase_b_model_plan.md` — smgen (TOML → generated C), decisions D12–D17 (committed artifacts, tomllib zero-dep, linker-enforced callbacks, schema-impossible unrouted timeouts, model hash, project-level shared counts), phases B1–B4 with exit criteria. Next concrete step: B1.
 

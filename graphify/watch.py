@@ -28,7 +28,8 @@ import sys
 from pathlib import Path
 
 from .analyze import build_graph
-from .link import bind_callbacks, crosscheck_models, docs_xref, test_inventory
+from .link import (abi_check, bind_callbacks, crosscheck_models, docs_xref,
+                   test_inventory)
 from .machines import extract_machines, render_machines
 from .pytools import build_pygraph
 from .render import analyze, graph_json, render_html, render_report, render_wiki
@@ -55,7 +56,7 @@ def build_analysis(root: Path):
     docs = docs_xref(root, g, tests.run_tests)
     pyg = build_pygraph(root)
     return analyze(g, machines, bindings, checks, docs, tests, pyg,
-                   _test_defs(root))
+                   _test_defs(root), abi_check(root, g))
 
 
 def _rebuild_code(root: Path) -> None:
