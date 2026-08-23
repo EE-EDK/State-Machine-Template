@@ -97,6 +97,33 @@ extern "C" {
     ((dis_) = (type_)(~(type_)(field_)))
 
 /**
+ * @brief Assign a field and its DIS shadow as one indivisible update
+ *
+ * A DIS pair is only meaningful if no observer can see it half-updated.
+ * Writing the field and then its shadow as two plain stores leaves a window
+ * in which a reader -- including the ISR-safe readers that verify the pair,
+ * such as SM_GetState() and SM_Error_IsCriticalLock() -- observes an
+ * inconsistent pair and fires a corruption assertion on healthy data.
+ * (v4.1: before this, every runtime DIS update had that window.)
+ *
+ * Use this for any DIS-protected field written while the machine is live.
+ * Construction-time writes inside SM_Init are exempt by lifecycle contract:
+ * the instance is not yet observable.
+ *
+ * @param field_  Primary field (lvalue)
+ * @param dis_    DIS shadow field (lvalue, same width)
+ * @param type_   Unsigned integer type (uint8_t, uint16_t, etc.)
+ * @param value_  Value to assign to the primary field
+ */
+#define SM_DIS_ASSIGN(field_, dis_, type_, value_) \
+    do { \
+        SM_Platform_EnterCritical(); \
+        (field_) = (value_); \
+        SM_DIS_UPDATE((field_), (dis_), type_); \
+        SM_Platform_ExitCritical(); \
+    } while (0)
+
+/**
  * @brief Verify that a primary field matches its DIS shadow
  *
  * Fires SM_REQUIRE(id_) if the field and its inverse are inconsistent.

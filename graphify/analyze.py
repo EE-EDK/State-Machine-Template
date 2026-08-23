@@ -57,6 +57,16 @@ ISR_UNSAFE_RE = re.compile(
 ACCESS_RE = re.compile(
     r"\b([A-Za-z_]\w*)((?:\s*\[[^\]]*\])*(?:\s*(?:->|\.)\s*[A-Za-z_]\w*(?:\s*\[[^\]]*\])*)+)")
 WRITE_AFTER_RE = re.compile(r"^\s*(?:=(?!=)|\+\+|--|\+=|-=|\|=|&=|\^=|<<=|>>=)")
+# Function-like macros that WRITE through an lvalue argument. Without this the
+# extractor sees a bare identifier and records a read, so the state access
+# matrix silently loses the write edge for every field assigned through one --
+# which, since v4.1, is every DIS-protected field on a live machine.
+LVALUE_MACRO_ARGS = {
+    "SM_DIS_ASSIGN": (0, 1),    # (field, dis, type, value) -- writes both
+    "SM_DIS_UPDATE": (1,),      # (field, dis, type) -- writes the shadow
+}
+LVALUE_MACRO_RE = re.compile(
+    r"\b(" + "|".join(sorted(LVALUE_MACRO_ARGS)) + r")\s*\(")
 WRITE_BEFORE_RE = re.compile(r"(?:\+\+|--)\s*$")
 TYPEDEF_STRUCT_RE = re.compile(
     r"typedef\s+struct(?:\s+(\w+))?\s*\{", re.MULTILINE)
@@ -495,9 +505,31 @@ def _field_type(g: Graph, struct: str, fname: str) -> str | None:
     return None
 
 
+def _lvalue_spans(body: str) -> list[tuple[int, int]]:
+    """Offset ranges of macro arguments that are assigned through."""
+    spans: list[tuple[int, int]] = []
+    for m in LVALUE_MACRO_RE.finditer(body):
+        open_paren = m.end() - 1
+        end = match_paren(body, open_paren)
+        inner_start = open_paren + 1
+        args = split_args(body[inner_start:end - 1])
+        pos = inner_start
+        raw = body[inner_start:end - 1]
+        for idx, arg in enumerate(args):
+            at = raw.find(arg, pos - inner_start)
+            if at < 0:
+                continue
+            start = inner_start + at
+            pos = start + len(arg)
+            if idx in LVALUE_MACRO_ARGS[m.group(1)]:
+                spans.append((start, pos))
+    return spans
+
+
 def _extract_accesses(fn: Function, body: str, g: Graph,
                       decl_re: re.Pattern | None) -> None:
     vtypes = _var_types(fn, body, g, decl_re)
+    write_spans = _lvalue_spans(body)
     for m in ACCESS_RE.finditer(body):
         var = m.group(1)
         if var not in vtypes:
@@ -507,7 +539,8 @@ def _extract_accesses(fn: Function, body: str, g: Graph,
         before = body[max(0, m.start() - 4):m.start()]
         after = body[m.end():m.end() + 4]
         is_write = bool(WRITE_AFTER_RE.match(after) or
-                        WRITE_BEFORE_RE.search(before))
+                        WRITE_BEFORE_RE.search(before) or
+                        _in_spans(write_spans, m.start()))
         struct = vtypes[var]
         for i, fname in enumerate(chain):
             t = g.types.get(struct)

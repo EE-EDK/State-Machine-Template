@@ -320,7 +320,29 @@ def test_inventory(root: Path, g: Graph) -> TestInventory:
     api_names = {f.name for f in api}
     by_name_test: dict[str, set[str]] = {n: set() for n in api_names}
     by_name_ex: dict[str, set[str]] = {n: set() for n in api_names}
+
+    def macro_reaches(macro: str, seen: set[str]) -> set[str]:
+        """API names a function-like macro resolves to, transitively."""
+        out: set[str] = set()
+        if macro in seen or macro not in g.macros:
+            return out
+        seen.add(macro)
+        for callee in g.macros[macro].calls:
+            if callee in api_names:
+                out.add(callee)
+            if callee in g.macros:
+                out |= macro_reaches(callee, seen)
+        return out
+
     for fn in g.functions.values():
+        reached = set()
+        for macro in fn.expands:
+            reached |= macro_reaches(macro, set())
+        for name in reached:
+            if fn.unit == "tests":
+                by_name_test[name].add(fn.file)
+            elif fn.unit.startswith("ex:") or fn.unit == "stm32":
+                by_name_ex[name].add(fn.file)
         for callee_key in fn.calls:
             callee = g.functions.get(callee_key)
             if callee is None:
@@ -337,7 +359,10 @@ def test_inventory(root: Path, g: Graph) -> TestInventory:
                 by_name_test[name].add(fn.file)
             elif fn.unit.startswith("ex:") or fn.unit == "stm32":
                 by_name_ex[name].add(fn.file)
-    uncovered = sorted(n for n in api_names if not by_name_test[n])
+    # A trailing underscore marks an internal entry point (SM_TimeEvt_Tick_,
+    # SM_Init_): exercised through the public wrapper, not called directly.
+    uncovered = sorted(n for n in api_names
+                       if not by_name_test[n] and not n.endswith("_"))
     return TestInventory(run_tests=run_tests, api_test_files=by_name_test,
                          api_example_files=by_name_ex, uncovered_api=uncovered)
 

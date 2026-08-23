@@ -58,13 +58,20 @@ state-machine-template/
 │   ├── test_platform.c         # Test platform (longjmp assert, resettable sim time)
 │   ├── test_event_queue.c      # 10 tests: frontEvt, ring, watermark, delivery order
 │   ├── test_engine.c           # 21 tests: init, process, guards, timeout, dwell, history
-│   ├── test_time_events.c      # 11 tests: arm, disarm, one-shot, periodic, multi-timer
-│   ├── test_deferred.c         # 9 tests: defer, recall LIFO-to-front, flush, capacity
+│   ├── test_time_events.c      # 15 tests: arm, disarm, one-shot, periodic, multi-timer
+│   ├── test_deferred.c         # 10 tests: defer, recall FIFO-to-front, flush, capacity
 │   ├── test_error.c            # 18 tests: 3-tier errors, DIS, stats, recovery
 │   ├── test_debug.c            # 14 tests: levels, tags, periodic, hexdump
 │   ├── test_safety.c           # 11 tests: DIS corruption, bounded loops, SM_REQUIRE
 │   ├── test_hal.c              # 18 tests: critsec nesting, timeout wrap, capabilities
-│   └── test_integration.c      # 6 tests: full lifecycle, cross-subsystem scenarios
+│   ├── test_integration.c      # 6 tests: full lifecycle, cross-subsystem scenarios
+│   ├── test_lifecycle_hardening.c # 11 tests: v4.1 timer/reset, re-init, defer range, DIS pairs
+│   ├── test_rt_transition.c    # 12 tests: SM_AddTransition bounds, table capacity
+│   ├── test_post_event_guards.c # 12 tests: post accept range, reserved timeout id
+│   ├── test_stats_bounds.c     # 11 tests: statistics contract and bounds
+│   └── test_*_null*.c, test_recovery_edges.c, test_reset_extras.c
+│                               # 10 tests each: NULL/edge contracts per subsystem
+│                               # (239 RUN_TEST cases total across 20 suites)
 ├── CMakeLists.txt          # Build system (cmake 3.15+, C99)
 ├── Quick-Guide.md          # v3.0 quick reference
 ├── MIGRATION.md            # v2→v3 migration guide

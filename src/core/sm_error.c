@@ -95,9 +95,11 @@ bool SM_Error_Report(SM_Handle_t sm, SM_ErrorLevel_t level, uint16_t code)
 
         case SM_ERROR_CRITICAL:
             sm->error.minor_active = false;
-            sm->error.critical_lock = true;
-            SM_DIS_UPDATE(sm->error.critical_lock ? 1U : 0U,
-                          sm->error.critical_lock_dis, uint8_t);
+            /* Indivisible (v4.1): SM_Error_IsCriticalLock is documented
+             * ISR-safe and verifies this pair, so it must never observe the
+             * lock set with a stale shadow. */
+            SM_DIS_ASSIGN(sm->error.critical_lock,
+                          sm->error.critical_lock_dis, uint8_t, true);
             SM_LOG_ERROR("SM_Error: CRITICAL code=%u state=%u -- SYSTEM LOCKED",
                          (unsigned)code, (unsigned)info.state);
             break;

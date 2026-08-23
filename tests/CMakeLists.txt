@@ -119,3 +119,5 @@ add_sm_test(test_process_null      test_process_null.c)
 add_sm_test(test_queue_null_api    test_queue_null_api.c)
 add_sm_test(test_debug_null_safe   test_debug_null_safe.c)
 add_sm_test(test_recovery_edges    test_recovery_edges.c)
+
+add_sm_test(test_lifecycle_hardening test_lifecycle_hardening.c)

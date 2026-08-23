@@ -42,7 +42,7 @@
  * Assertion ID ranges (sm_engine):
  *   100-199  SM_Init (105/106: application vs library build dimensions)
  *   200-299  SM_Process
- *   300-399  Time events
+ *   300-399  Time events (302 re-init of an armed timer, 340 disarm-all)
  *   400-499  Deferred events
  *   500-599  Event posting / queue ops
  *   600-699  Reset / misc lifecycle
@@ -54,6 +54,12 @@
 #include <string.h>
 
 SM_DEFINE_MODULE("sm_engine");
+
+#if SM_FEATURE_TIME_EVENTS
+/* Defined with the time-event implementation further down; SM_Reset (above
+ * it in this file) needs it to clear the schedule. */
+static void sm_timeevt_disarm_all(SM_Handle_t sm);
+#endif
 
 /* =============================================================================
  * INTERNAL HELPERS
@@ -312,10 +318,11 @@ static void sm_execute_transition(SM_Handle_t sm, const SM_Transition_t *trans,
         trans->action(sm, evt->event, evt->data);
     }
 
-    /* --- Update state + DIS (D7) --- */
+    /* --- Update state + DIS (D7), indivisibly (v4.1).
+     *     SM_GetState is documented ISR-safe and verifies the pair, so an
+     *     ISR must never observe the field updated and the shadow stale. --- */
     sm->previous_state = old_state;
-    sm->current_state = new_state;
-    SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
+    SM_DIS_ASSIGN(sm->current_state, sm->state_dis, uint16_t, new_state);
 
     /* --- Record in history --- */
     sm_history_record(sm, new_state);
@@ -391,7 +398,13 @@ bool SM_Init_(SM_Handle_t sm, const SM_Config_t *config,
     /* Store config pointer (not copied -- must remain valid) */
     sm->config = config;
 
-    /* Set initial state + DIS (D7) */
+    /* Set initial state + DIS (D7).
+     *
+     * Plain stores, not SM_DIS_ASSIGN: SM_Init constructs the instance, and
+     * an instance under construction is not yet observable by contract --
+     * the memset above already precludes concurrent access. Every DIS update
+     * on a LIVE machine (sm_execute_transition, SM_Reset, SM_Error_Report)
+     * is indivisible instead. */
     sm->current_state = config->initial_state;
     sm->previous_state = config->initial_state;
     SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
@@ -600,6 +613,13 @@ void SM_Reset(SM_Handle_t sm)
     /* Flush event queue */
     SM_EventQueueFlush(sm);
 
+    /* Disarm every scheduled timer (v4.1). Without this, a timer armed by
+     * the state we just left keeps firing into the reset machine -- the old
+     * state's on_exit only disarms the timers it knows about. */
+#if SM_FEATURE_TIME_EVENTS
+    sm_timeevt_disarm_all(sm);
+#endif
+
     /* Flush deferred events */
 #if SM_FEATURE_DEFER
     SM_FlushDeferred(sm);
@@ -612,8 +632,8 @@ void SM_Reset(SM_Handle_t sm)
      * (same as after SM_Init) so SM_Reset stays safe to call from outside
      * the processing context. */
     sm->previous_state = sm->current_state;
-    sm->current_state = sm->config->initial_state;
-    SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
+    SM_DIS_ASSIGN(sm->current_state, sm->state_dis, uint16_t,
+                  sm->config->initial_state);
     sm->state_entry_time = SM_Platform_GetTimeMs();
     sm->state_exec_count = 0U;
     sm->state_entered = true;
@@ -855,6 +875,36 @@ void SM_ResetStats(SM_Handle_t sm)
 #define SM_TIMEEVT_DUE(now_, deadline_) \
     ((uint32_t)((now_) - (deadline_)) < 0x80000000UL)
 
+/**
+ * @brief Disarm and unlink every time event scheduled on this instance
+ *
+ * Used by SM_Reset (v4.1): timers armed by the state being left used to keep
+ * firing into the freshly reset machine, because Reset flushed both queues
+ * but never touched the timer list.
+ */
+static void sm_timeevt_disarm_all(SM_Handle_t sm)
+{
+    SM_Platform_EnterCritical();
+    {
+        SM_TimeEvt_t *te = sm->time_evt_head;
+        uint16_t walk = 0U;
+
+        while (te != NULL && walk < SM_FEATURE_MAX_TIME_EVENTS) {
+            SM_TimeEvt_t *next = te->next;
+            te->armed = false;
+            te->deadline = 0U;
+            te->interval = 0U;
+            te->next = NULL;
+            te = next;
+            walk++;
+        }
+        SM_INVARIANT(340, walk <= SM_FEATURE_MAX_TIME_EVENTS);
+
+        sm->time_evt_head = NULL;
+    }
+    SM_Platform_ExitCritical();
+}
+
 void SM_TimeEvt_Init(SM_TimeEvt_t *te, SM_Handle_t sm, uint16_t sig, uint32_t data)
 {
     SM_REQUIRE(300, te != NULL);
@@ -863,6 +913,39 @@ void SM_TimeEvt_Init(SM_TimeEvt_t *te, SM_Handle_t sm, uint16_t sig, uint32_t da
     if (te == NULL || sm == NULL) {
         return;
     }
+
+    /* Re-initializing a still-scheduled timer used to clear te->next without
+     * unlinking it, silently orphaning every timer behind it in the owner's
+     * list (v4.1 fix).
+     *
+     * The check searches the OWNER's list for this node rather than testing
+     * te->armed: a freshly declared timer -- including one on the stack, as
+     * the test suite and many applications use -- holds indeterminate values,
+     * so reading its fields before initialization would be the bug it is
+     * meant to prevent. Walking the list touches only memory the instance
+     * already owns, and te->next is read only after te is found in it. */
+    SM_Platform_EnterCritical();
+    {
+        SM_TimeEvt_t *prev = NULL;
+        SM_TimeEvt_t *cur = sm->time_evt_head;
+        uint16_t walk = 0U;
+
+        while (cur != NULL && walk < SM_FEATURE_MAX_TIME_EVENTS) {
+            if (cur == te) {
+                if (prev != NULL) {
+                    prev->next = te->next;
+                } else {
+                    sm->time_evt_head = te->next;
+                }
+                break;
+            }
+            prev = cur;
+            cur = cur->next;
+            walk++;
+        }
+        SM_INVARIANT(302, walk <= SM_FEATURE_MAX_TIME_EVENTS);
+    }
+    SM_Platform_ExitCritical();
 
     te->next = NULL;
     te->sm = sm;
@@ -1072,6 +1155,13 @@ bool SM_DeferEvent(SM_Handle_t sm, uint16_t event, uint32_t data)
     SM_REQUIRE(400, sm != NULL);
 
     if (sm == NULL || !sm->initialized) {
+        return false;
+    }
+
+    /* Same accept range as SM_PostEvent (v4.1): a deferred event is recalled
+     * straight into the main queue, so accepting an out-of-range id here
+     * would smuggle past the posting guard. */
+    if (event >= SM_EVENT_COUNT) {
         return false;
     }
 

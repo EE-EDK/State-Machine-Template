@@ -31,6 +31,33 @@ therefore a **single-reviewer** list with explicit evidence tags — treat
 
 ---
 
+## Status: what has since been FIXED (v4.1)
+
+Two commits after this review closed the items below. Everything else in this
+document is still open. Verification for the whole batch: `ctest` 23/23, zero
+compiler warnings, all six example programs byte-identical to before the
+changes, and the six new lifecycle tests confirmed to FAIL against the pre-fix
+engine (so they are real detectors, not vacuous).
+
+| # | Finding | How it was closed |
+|---|---|---|
+| 1.1 / 4.1 / 9.1 | Library baked `SM_STATE_COUNT=4 / SM_EVENT_COUNT=8`; apps diverged | `SM_EVT_TIMEOUT` is now a fixed reserved id `0xFFFF` (was `SM_EVENT_COUNT`, so it differed per translation unit); the dimensions became CMake cache variables applied `PUBLIC` to `sm_framework`; examples no longer re-`#define` them. Re-ran the reproduction: the cross-TU timeout route now fires. |
+| 1.1 (residual) | Range checks still divergent for an installed archive | `SM_Init` is a macro over `SM_Init_` carrying the app's dimensions; a mismatch fires assertion 105/106 and returns false. Verified: a mismatched program is rejected. |
+| 1.2 | Field + DIS shadow written as two observable stores | New `SM_DIS_ASSIGN` performs both inside one critical section; used in `sm_execute_transition`, `SM_Reset`, `SM_Error_Report`. `SM_Init` documented as exempt (instance not yet observable). **Caveat:** no test can observe the race without ISR interleaving (7.2 remains open) — the new tests only pin nesting balance. |
+| 1.3 | Armed timers survived `SM_Reset` | `sm_timeevt_disarm_all()` clears the schedule in `SM_Reset`. |
+| 1.4 | `SM_TimeEvt_Init` on an armed timer truncated the list | Init now unlinks by searching the owner's list — deliberately *not* by reading `te->armed`, since timers are often stack-allocated and indeterminate before init (the first attempt did read it and segfaulted the existing suite). |
+| 1.9 | `SM_DeferEvent` accepted out-of-range ids | Same accept range as `SM_PostEvent`. |
+| 3.9 | `sm_debug.c` had no `SM_DEFINE_MODULE` | Added, with its own assertion block (800–899) of internal invariants only. |
+| 4.6 / 8.3 / 8.5 | Version drift (headers said 3.0.0, framework 4.0.0) | Everything unified at 4.1.0 in one pass; `MIGRATION.md` gained a v4.0 → v4.1 section. |
+| 7.6 | CLAUDE.md test counts stale | Corrected; the G8 check that compares them is now clean. |
+| 10.6 (partial) | graphify modelling gaps this work exposed | Writes through a macro's lvalue argument are now modelled (otherwise every DIS write edge vanished); API coverage follows macro expansion (otherwise `SM_Init_` looked untested); `_`-suffixed internal entry points are exempt from the untested/undocumented checks. Four new extractor tests. |
+
+Graph-level result: **G-checks went from 1 ERROR + 17 WARN to 0 ERROR + 8 WARN**
+(the remaining 8 are the 7 never-exercised HAL stubs, finding 4.5, and the
+never-compiled HSM region, finding 7.1 — both need larger work).
+
+---
+
 ## 0. What the framework already does well (for fairness)
 
 - Zero heap, zero globals in the engine, static allocation only — confirmed

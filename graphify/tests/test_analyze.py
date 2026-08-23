@@ -301,3 +301,62 @@ class LinkChecksTests(unittest.TestCase):
         checks = {c for _, c, _ in ms[0].findings}
         self.assertIn("V6-shadowed-row", checks)
         self.assertIn("V7-duplicate-row", checks)
+
+
+class LvalueMacroTests(unittest.TestCase):
+    """Writes performed through a function-like macro's lvalue argument.
+
+    Since v4.1 every DIS-protected field on a live machine is assigned via
+    SM_DIS_ASSIGN, so an extractor that only understands `x = y` loses the
+    write edge for exactly the fields whose single-writer property matters
+    most. This regression-tests the modelling of that.
+    """
+
+    def test_dis_assign_records_writes_for_both_lvalue_args(self):
+        root = _repo({
+            "include/t.h": HEADER + """
+                #define SM_DIS_ASSIGN(f_, d_, t_, v_) \
+                    do { (f_) = (v_); SM_DIS_UPDATE((f_), (d_), t_); } while (0)
+                #define SM_DIS_UPDATE(f_, d_, t_) ((d_) = (t_)(~(t_)(f_)))
+            """,
+            "src/core/w.c": """
+                #include "t.h"
+                void writer(SM_Handle_t sm, uint16_t next)
+                {
+                    SM_DIS_ASSIGN(sm->current_state, sm->state_dis,
+                                  uint16_t, next);
+                }
+                void reader(SM_Handle_t sm)
+                {
+                    uint16_t s = sm->current_state;
+                    (void)s;
+                }
+            """,
+        })
+        g = build_graph(root)
+        w = g.functions["writer@src/core/w.c"]
+        self.assertIn("SM_Context.current_state", w.writes)
+        self.assertIn("SM_Context.state_dis", w.writes)
+        # the value argument stays a read, not a write
+        r = g.functions["reader@src/core/w.c"]
+        self.assertIn("SM_Context.current_state", r.reads)
+        self.assertNotIn("SM_Context.current_state", r.writes)
+
+    def test_plain_read_of_a_macro_arg_is_not_a_write(self):
+        root = _repo({
+            "include/t.h": HEADER + """
+                #define SM_DIS_VERIFY(f_, d_, t_, id_) SM_REQUIRE((id_), 1)
+            """,
+            "src/core/v.c": """
+                #include "t.h"
+                void verify(SM_Handle_t sm)
+                {
+                    SM_DIS_VERIFY(sm->current_state, sm->state_dis,
+                                  uint16_t, 201);
+                }
+            """,
+        })
+        g = build_graph(root)
+        v = g.functions["verify@src/core/v.c"]
+        self.assertEqual(v.writes, set())
+        self.assertIn("SM_Context.current_state", v.reads)

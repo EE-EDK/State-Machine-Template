@@ -19,11 +19,15 @@
  * are macro'd to no-ops in the header).
  */
 
-/* SM_DEFINE_MODULE("sm_debug") -- added post-merge with sm_safety.h */
-
 #include "sm_framework/sm_framework.h"
 
 #if SM_FEATURE_DEBUG
+
+/* Assertion ID range for this module: 800-899 (v4.1). The assertions below
+ * are internal invariants -- buffer bookkeeping and table bounds that user
+ * input can never violate -- so enabling them cannot turn a caller mistake
+ * into a halt. See sm_engine.c (100-699) and sm_error.c (700-799). */
+SM_DEFINE_MODULE("sm_debug");
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -148,9 +152,12 @@ int8_t SM_Debug_RegisterTag(const char *tag_name)
         return -1;
     }
 
+    SM_REQUIRE(801, sm_tag_count < SM_DEBUG_MAX_TAGS);
+
     int8_t id = (int8_t)sm_tag_count;
     sm_tag_names[sm_tag_count] = tag_name;
     sm_tag_count++;
+    SM_REQUIRE(802, sm_tag_count <= SM_DEBUG_MAX_TAGS);
     return id;
 }
 
@@ -239,6 +246,7 @@ void SM_Debug_Print(uint8_t level, const char *fmt, ...)
     if ((size_t)msg_len >= sizeof(msg_buf)) {
         msg_len = (int)(sizeof(msg_buf) - 1U);
     }
+    SM_REQUIRE(800, (msg_len >= 0) && ((size_t)msg_len < sizeof(msg_buf)));
 
     /* Level tag */
     const char *tag = (level < SM_LEVEL_TAG_COUNT) ? sm_level_tags[level] : "???";
