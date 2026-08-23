@@ -1,5 +1,92 @@
 # Migration Guide
 
+# v4.1 to v4.2
+
+## Overview
+
+v4.1 made the library and the application agree about `SM_STATE_COUNT` and
+`SM_EVENT_COUNT`. It did not make them agree about anything else — and the
+application is the side that allocates `SM_Context_t`.
+
+That struct's layout depends on eight macros, not two:
+`SM_STATE_HISTORY_DEPTH`, `SM_EVENT_QUEUE_SIZE`, `SM_ERROR_HISTORY_SIZE`,
+`SM_MAX_TRANSITIONS`, `SM_DEFER_QUEUE_SIZE`, `SM_STATE_COUNT` and the
+`SM_FEATURE_*` flags. A build that disagreed on any of the six v4.1 did not
+check passed assertions 105 and 106 cleanly and then had the library read and
+write at *its* field offsets inside an object the application had sized
+differently.
+
+This was reproduced, not argued. An application compiled with
+`SM_EVENT_QUEUE_SIZE=4` against the shipped library (8):
+
+```
+application sizeof(SM_Context_t) = 1160  (queue size 4)
+library    sizeof(SM_Context_t) = 1224  (queue size 8)
+
+v4.1:  SM_Init returned: true        <- accepted
+       canary bytes clobbered: 64    <- wrote 64 bytes past the caller's object
+
+v4.2:  *** ASSERTION: sm_engine:107 ***
+       canary intact                 <- rejected before the memset
+```
+
+Memory corruption, not a wrong answer — a worse failure than the one v4.1 was
+released to fix, and it survived that release. `tests/test_abi_guard.c` is this
+reproduction, wired into `ctest` so it cannot regress silently.
+
+## Breaking changes
+
+1. **`SM_Init_` takes a fourth argument.**
+
+   ```c
+   /* v4.1 */
+   bool SM_Init_(SM_Handle_t sm, const SM_Config_t *config,
+                 uint16_t app_state_count, uint16_t app_event_count);
+
+   /* v4.2 */
+   bool SM_Init_(SM_Handle_t sm, const SM_Config_t *config,
+                 uint16_t app_state_count, uint16_t app_event_count,
+                 uint32_t app_abi);
+   ```
+
+   - **Action: none** if you call `SM_Init(sm, &config)`, which is the
+     documented API. The macro supplies the new argument.
+   - If you called `SM_Init_` directly — it is `_`-suffixed and internal, but
+     reachable — pass `(uint32_t)SM_ABI_FINGERPRINT` as the fourth argument.
+
+2. **`SM_Init` now fails on any configuration mismatch, not just the two
+   counts.** Assertion **107** compares `SM_ABI_FINGERPRINT`, which folds
+   `sizeof(SM_Context_t)` together with every layout- and semantics-affecting
+   macro.
+
+   - **Action:** if `SM_Init` starts returning false (or asserting 107) on code
+     that worked before, it was **already broken** — the check is reporting a
+     divergence that was previously silent. The log line prints both
+     fingerprints in hex. Set the configuration once for the whole build:
+
+     ```
+     cmake -DSM_STATE_COUNT=6 -DSM_EVENT_COUNT=12 ..
+     ```
+
+     or force-include your `app_config.h` into *every* target, framework
+     sources included. Do not `#define` these macros in application sources
+     only. See `config/sm_config_template.h`.
+
+## New in v4.2
+
+- **`SM_ABI_FINGERPRINT`** (`sm_types.h`) — the compile-time build signature.
+  Usable by applications that want to log or transmit their own value. It is
+  not a preprocessor constant (`sizeof` participates), so it cannot appear in
+  `#if` or `SM_STATIC_ASSERT`.
+
+## Not changed
+
+- No engine semantics change. All six examples produce byte-identical output to
+  v4.1 apart from the version banner.
+- `SM_EVT_TIMEOUT` remains the fixed reserved id `0xFFFF`.
+- Assertion IDs 100–106 keep their v4.1 meanings.
+
+
 # v4.0 to v4.1
 
 ## Overview

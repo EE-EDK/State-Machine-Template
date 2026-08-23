@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 
 project(StateMachineFramework
-    VERSION 4.1.0
+    VERSION 4.2.0
     DESCRIPTION "Modular State Machine Framework for Embedded Systems"
     LANGUAGES C
 )

@@ -11,6 +11,7 @@
  */
 
 #include "sm_framework/sm_platform.h"
+#include "sm_framework/sm_types.h"
 #include "test_common.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -184,4 +185,26 @@ void SM_Platform_Assert(const char *module, int id)
     /* Don't loop forever in tests -- abort so the test runner can continue */
     /* Use exit instead of abort to avoid core dumps */
     exit(1);
+}
+
+/* =============================================================================
+ * LIBRARY-SIDE ABI PROBES (v4.2, W1)
+ *
+ * Compiled with the LIBRARY's configuration, not the test executable's.
+ * See test_common.h and tests/test_abi_guard.c.
+ * ===========================================================================*/
+
+uint32_t test_lib_sizeof_context(void)
+{
+    return (uint32_t)sizeof(SM_Context_t);
+}
+
+uint32_t test_lib_abi_fingerprint(void)
+{
+    return (uint32_t)SM_ABI_FINGERPRINT;
+}
+
+uint32_t test_lib_event_queue_size(void)
+{
+    return (uint32_t)SM_EVENT_QUEUE_SIZE;
 }

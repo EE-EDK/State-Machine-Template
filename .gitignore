@@ -1,6 +1,8 @@
 # Build directories
-build/
-build_wtr/
+# Glob rather than a list: build-arm/ and build_runner/ existed on disk for
+# months matching none of the individual entries (finding F-E), and only the
+# generic *.o / *.a / CMakeFiles/ rules below were keeping their contents out.
+build*/
 Build/
 out/
 cmake-build-*/

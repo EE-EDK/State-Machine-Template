@@ -39,23 +39,32 @@ extern "C" {
  * @note config pointer is stored (not copied) -- must remain valid.
  */
 bool SM_Init_(SM_Handle_t sm, const SM_Config_t *config,
-              uint16_t app_state_count, uint16_t app_event_count);
+              uint16_t app_state_count, uint16_t app_event_count,
+              uint32_t app_abi);
 
 /**
  * @brief Initialize a state machine instance (build-consistency checked)
  *
- * SM_Init is a macro so the APPLICATION's compile-time dimensions travel with
- * the call and can be compared against the ones the framework itself was
- * compiled with. They must match: the library's copies drive SM_Init's
- * initial-state check, SM_PostEvent's accept range and (with statistics on)
- * SM_Context_t's layout. A mismatch fires assertion 105 and returns false
- * instead of failing silently at some later, unrelated call.
+ * SM_Init is a macro so the APPLICATION's compile-time configuration travels
+ * with the call and can be compared against the one the framework itself was
+ * compiled with. Three things are checked:
  *
- * Set the dimensions once for the whole build (see CMakeLists.txt); do not
- * re-#define them in application sources.
+ *   - assertion 105: SM_STATE_COUNT   (drives the initial-state check)
+ *   - assertion 106: SM_EVENT_COUNT   (drives SM_PostEvent's accept range)
+ *   - assertion 107: SM_ABI_FINGERPRINT -- sizeof(SM_Context_t) folded together
+ *     with every remaining layout- and semantics-affecting macro
+ *
+ * 107 is the one that matters most, because the APPLICATION allocates the
+ * context. Disagreeing on SM_EVENT_QUEUE_SIZE or SM_FEATURE_DEFER does not
+ * produce a wrong answer -- it has the library write past the end of the
+ * application's object. All three fail the call instead of corrupting memory.
+ *
+ * Set the configuration once for the whole build (see CMakeLists.txt); do not
+ * re-#define these macros in application sources.
  */
 #define SM_Init(sm_, config_) \
-    SM_Init_((sm_), (config_), (uint16_t)(SM_STATE_COUNT), (uint16_t)(SM_EVENT_COUNT))
+    SM_Init_((sm_), (config_), (uint16_t)(SM_STATE_COUNT), \
+             (uint16_t)(SM_EVENT_COUNT), (uint32_t)(SM_ABI_FINGERPRINT))
 
 /**
  * @brief Process one iteration of the state machine

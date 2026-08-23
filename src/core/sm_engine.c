@@ -40,7 +40,8 @@
  *     this cycle is normally delivered in this same cycle.
  *
  * Assertion ID ranges (sm_engine):
- *   100-199  SM_Init (105/106: application vs library build dimensions)
+ *   100-199  SM_Init (105/106: application vs library build dimensions,
+ *            107: full ABI fingerprint -- layout + semantics macros)
  *   200-299  SM_Process
  *   300-399  Time events (302 re-init of an armed timer, 340 disarm-all)
  *   400-499  Deferred events
@@ -353,7 +354,8 @@ static void sm_execute_transition(SM_Handle_t sm, const SM_Transition_t *trans,
  * ===========================================================================*/
 
 bool SM_Init_(SM_Handle_t sm, const SM_Config_t *config,
-              uint16_t app_state_count, uint16_t app_event_count)
+              uint16_t app_state_count, uint16_t app_event_count,
+              uint32_t app_abi)
 {
     SM_REQUIRE(100, sm != NULL);
     SM_REQUIRE(101, config != NULL);
@@ -372,6 +374,27 @@ bool SM_Init_(SM_Handle_t sm, const SM_Config_t *config,
                      "library was built with %u/%u",
                      (unsigned)app_state_count, (unsigned)app_event_count,
                      (unsigned)SM_STATE_COUNT, (unsigned)SM_EVENT_COUNT);
+        return false;
+    }
+
+    /* Full ABI check (v4.2, D23). 105/106 above cover two macros; the context
+     * the application allocated depends on eight, and the engine's semantics on
+     * several more. This compares all of them at once -- including
+     * sizeof(SM_Context_t), which is the number that decides whether the writes
+     * below stay inside the caller's object.
+     *
+     * Deliberately placed before the memset: everything up to here compares
+     * values passed by register. The first dereference of `sm` must not happen
+     * until the layout is known to agree. */
+    SM_REQUIRE(107, app_abi == (uint32_t)SM_ABI_FINGERPRINT);
+
+    if (app_abi != (uint32_t)SM_ABI_FINGERPRINT) {
+        SM_LOG_ERROR("SM_Init: ABI mismatch -- app fingerprint 0x%08lX, "
+                     "library 0x%08lX. The two disagree on a macro that "
+                     "changes SM_Context_t's layout or the engine's "
+                     "semantics; set them once for the whole build.",
+                     (unsigned long)app_abi,
+                     (unsigned long)SM_ABI_FINGERPRINT);
         return false;
     }
 

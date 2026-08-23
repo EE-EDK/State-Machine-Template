@@ -465,6 +465,48 @@ struct SM_Context {
     bool initialized;                  /**< True after successful SM_Init() */
 };
 
+/* =============================================================================
+ * BUILD-CONSISTENCY FINGERPRINT (v4.2, D23)
+ *
+ * The APPLICATION allocates SM_Context_t (`SM_Context_t sm_ctx;`) and hands the
+ * library a pointer to it. The struct's layout above depends on eight macros --
+ * SM_STATE_HISTORY_DEPTH, SM_EVENT_QUEUE_SIZE, SM_ERROR_HISTORY_SIZE,
+ * SM_MAX_TRANSITIONS, SM_DEFER_QUEUE_SIZE, SM_STATE_COUNT and the
+ * SM_FEATURE_* flags -- and the engine's behaviour depends on several more that
+ * move no field at all. v4.1 checked two of them (assertions 105/106). A build
+ * that disagreed on any of the rest passed those checks and then had the
+ * library write at ITS offsets into an object the application had sized
+ * differently: memory corruption, not a failed range check.
+ *
+ * This fingerprint closes the remaining doors. sizeof() catches every layout
+ * divergence in one number and needs no maintenance when a field is added; the
+ * folded macros additionally catch semantic divergence that moves nothing
+ * (SM_FEATURE_ASSERT, SM_MAX_EVENTS_PER_PROCESS). The application's value
+ * travels with SM_Init and is compared against the library's (assertion 107).
+ *
+ * Not a preprocessor constant -- sizeof() means it cannot appear in #if or
+ * SM_STATIC_ASSERT. It is a compile-time constant expression in C, folded to a
+ * literal by any optimizing compiler.
+ * ===========================================================================*/
+#define SM_ABI_FINGERPRINT ( \
+      ((uint32_t)sizeof(struct SM_Context)         * 0x9E3779B1U) \
+    ^ ((uint32_t)(SM_STATE_COUNT)                  * 0x85EBCA77U) \
+    ^ ((uint32_t)(SM_EVENT_COUNT)                  * 0xC2B2AE3DU) \
+    ^ ((uint32_t)(SM_EVENT_QUEUE_SIZE)            <<  1) \
+    ^ ((uint32_t)(SM_DEFER_QUEUE_SIZE)            <<  5) \
+    ^ ((uint32_t)(SM_ERROR_HISTORY_SIZE)          <<  9) \
+    ^ ((uint32_t)(SM_STATE_HISTORY_DEPTH)         << 13) \
+    ^ ((uint32_t)(SM_MAX_TRANSITIONS)             << 17) \
+    ^ ((uint32_t)(SM_MAX_EVENTS_PER_PROCESS)      << 20) \
+    ^ ((uint32_t)(SM_FEATURE_MAX_TIME_EVENTS)     << 23) \
+    ^ ((uint32_t)(SM_FEATURE_RUNTIME_TRANSITIONS) << 24) \
+    ^ ((uint32_t)(SM_FEATURE_TIME_EVENTS)         << 25) \
+    ^ ((uint32_t)(SM_FEATURE_DEFER)               << 26) \
+    ^ ((uint32_t)(SM_FEATURE_STATISTICS)          << 27) \
+    ^ ((uint32_t)(SM_FEATURE_ASSERT)              << 28) \
+    ^ ((uint32_t)(SM_FEATURE_DEBUG)               << 29) \
+    ^ ((uint32_t)(SM_FEATURE_HSM)                 << 30) )
+
 #ifdef __cplusplus
 }
 #endif

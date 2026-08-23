@@ -86,6 +86,28 @@ add_sm_test(test_safety       test_safety.c)
 add_sm_test(test_hal          test_hal.c)
 add_sm_test(test_integration  test_integration.c)
 
+# -----------------------------------------------------------------------------
+# ABI GUARD (v4.2, W1 / D23)
+#
+# The same source compiled twice. The second target is the reproduction: its
+# translation unit sets SM_EVENT_QUEUE_SIZE=16 while sm_framework_test was
+# compiled at 8, so the application's SM_Context_t is a different shape from the
+# one the library writes into. Assertions 105 and 106 do not see it -- the two
+# count macros still agree -- and before v4.2 nothing else did either.
+#
+# Do not "fix" the mismatched target by aligning its definitions. Being wrong is
+# its entire job.
+# -----------------------------------------------------------------------------
+
+add_sm_test(test_abi_guard  test_abi_guard.c)
+
+add_executable(test_abi_guard_mismatch test_abi_guard.c)
+target_link_libraries(test_abi_guard_mismatch PRIVATE sm_framework_test unity_lib)
+# The divergence itself is declared at the top of test_abi_guard.c, where a
+# reader will see it. This flag only selects which half of the file compiles.
+target_compile_definitions(test_abi_guard_mismatch PRIVATE SM_TEST_ABI_MISMATCH=1)
+add_test(NAME test_abi_guard_mismatch COMMAND test_abi_guard_mismatch)
+
 # =============================================================================
 # SMGEN MODEL TOOLING TESTS (Python, optional -- skipped without Python 3.11+)
 # =============================================================================

@@ -57,6 +57,24 @@ void test_assert_clear(void);
 /** Reset simulation time counter to 0. */
 void test_sim_time_reset(void);
 
+/* =============================================================================
+ * LIBRARY-SIDE ABI PROBES (v4.2, W1)
+ *
+ * test_platform.c is compiled into sm_framework_test, so these report the
+ * values the LIBRARY was built with. A test executable's own translation unit
+ * reports its own. Comparing the two is how test_abi_guard demonstrates a real
+ * application/library divergence instead of asserting a hardcoded constant.
+ * ===========================================================================*/
+
+/** sizeof(SM_Context_t) as the linked library sees it. */
+uint32_t test_lib_sizeof_context(void);
+
+/** SM_ABI_FINGERPRINT as the linked library computed it. */
+uint32_t test_lib_abi_fingerprint(void);
+
+/** SM_EVENT_QUEUE_SIZE the linked library was compiled with. */
+uint32_t test_lib_event_queue_size(void);
+
 /**
  * @brief Verify that a code block fires an assertion.
  *
