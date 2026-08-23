@@ -201,6 +201,10 @@ def _validate(a: Analysis) -> list[Finding]:
         out.append(Finding("INFO", "G8-undocumented-api",
                            f"`{name}` not mentioned in "
                            f"{' or '.join(a.docs.user_docs)}"))
+    for doc, toks in sorted(a.docs.planned.items()):
+        out.append(Finding("INFO", "G8-planned-doc-symbol",
+                           f"{doc} names {', '.join(f'`{t}`' for t in toks)} "
+                           f"as planned API that does not exist yet"))
     for doc, toks in sorted(a.docs.stale.items()):
         out.append(Finding("WARN", "G8-stale-doc-symbol",
                            f"{doc} references unknown symbol(s): "

@@ -7,6 +7,86 @@
 
 ---
 
+## 0a. EXECUTION STATUS — appended 2026-08-23 by the Claude Code session
+
+Additive record. Nothing below this block was rewritten; §1–§8 are the brief as
+authored. Read this first for what actually happened.
+
+### State verification (§1) — PASSED, with one reconciliation
+
+| Check | Brief expected | Measured |
+|---|---|---|
+| HEAD | `6bf7bd0` | **`00920be`** — `6bf7bd0` is its ancestor. The brief mislabelled which of the four v4.1 commits is the tip; `00920be` is the correct v4.1 head and contains all four. Substance unaffected, brief not stale. |
+| Tree | clean + 5 untracked | clean + 4 untracked (`build-arm/` is empty, so git never listed it) |
+| `ctest` | 23/23 | 23/23 |
+| Compiler warnings | 0 | 0 |
+| G-checks | 0 ERROR / 8 WARN / 16 INFO | exact match |
+| MACHINES.md app V-checks | 0 WARN / 1 INFO | exact match |
+| §1 WARN-composition correction | 7×G7 + 1×G10 | **confirmed verbatim** |
+
+Also verified: this repo's `.git` is a gitdir pointer left from the removed
+submodule system, but MASTER reports **0 submodules**, so §5's
+`git submodule status` gate is a no-op here. F-E confirmed and closed: `git
+ls-files` showed **0 tracked files** under `build-arm/` or `build_runner/` —
+nothing had leaked. `.gitignore` now uses a `build*/` glob.
+
+### Work order
+
+| Item | Status | Commit |
+|---|---|---|
+| W1 ABI fingerprint | **DONE** | `77a1a11` |
+| W2b graphify G16 | **DONE** | `ffdc2f7` |
+| W2a ISR harness | **DONE** | `609b93f` |
+| W3 MINOR accessors | **DONE** | `d437af0` |
+| W4 parent-fallback rename | open | — |
+| W5 HAL disposition | open | — |
+| W6 doc/measurement truth | open | — |
+| W7 test-build divergence | open | — |
+| W8 feature matrix + CI | open | — |
+
+W2b was taken before W2a: it is the item that retires the "DIS unproven"
+caveat, and knowing what G16 already covers is what keeps W2a's claims honest.
+
+### Findings the execution produced
+
+- **F-C upgraded from `[DERIVED]` to measured.** The brief reasoned that a
+  boundary-injected ISR cannot observe the DIS tear. It was run against
+  `9427166~1` — the pre-fix engine G16 reports **6 ERRORs** against — and
+  **all 12 harness cases pass**. The runtime harness gives genuinely torn code
+  a clean bill of health. F-C was right, and it is now measured rather than
+  argued.
+- **F-A reproduced with a number.** App at `SM_EVENT_QUEUE_SIZE=4` against the
+  library at 8: v4.1 returns true and writes **64 bytes past the end of the
+  caller's context**; v4.2 fires assertion 107 with the canary intact.
+- **v4.1's own dimension guard (105/106) shipped with no test at all.** Not in
+  the brief. `tests/test_abi_guard.c` now covers it.
+- **graphify precision bug, found by W2a's own test.** `_isr_contract` matched
+  "ISR-safe" anywhere in a doc comment, so a comment naming *another*
+  function's contract made the enclosing function ISR-safe (false G5). Three
+  prose mentions in the shipped headers have the same shape — latent, not
+  novel. Fixed rather than reworded around; the declared-contract table was
+  diffed before and after and is identical.
+- **G8 caught a stale test count mid-run** (CLAUDE.md said `test_error.c` had
+  18; it had 26). The checkers are earning their keep.
+
+### Environment hazard worth carrying forward
+
+This shell's heredocs **eat backslash-newline pairs**. That silently collapsed a
+multi-line C macro onto one line and turned a regex `\b` into a literal
+backspace (the same trap the 2026-08-22 session hit). Write patch scripts to a
+file and run them; never heredoc anything containing a backslash. Also: Unity's
+`FetchContent` dependency files blow Windows `MAX_PATH` under the scratchpad —
+scratch builds need a short path such as `C:/smfb`.
+
+### Correction to §4's W1 note
+
+The fingerprint references `SM_FEATURE_HSM`, not `SM_FEATURE_PARENT_FALLBACK`,
+because W4 has not run. **W4 must rename it there too** — `sm_types.h`'s
+`SM_ABI_FINGERPRINT` is now a fifth site for that rename, in addition to the
+sites §4 lists.
+
+---
+
 ## 0. How to use this document
 
 1. Read §1 (state verification) and run its commands **before** touching anything. Do not trust §2–§7 until §1 passes — this brief was written from a read-only mount with no git access.

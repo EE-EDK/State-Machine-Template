@@ -140,6 +140,55 @@ See `docs_dev/task_plan.md` for full rationale. Key: D6 frontEvt, D7 DIS, D8 bou
 - Do not leave all debug messages enabled in production (use SM_DEBUG_LEVEL and SM_Debug_EnableLevel)
 
 ## TODO
+
+### v4.2.0 work order — remaining (opened 2026-08-23)
+
+Directive brief: `docs_dev/state-machine-template_execution-brief_v1.0.md`
+(decisions D18–D24, work order W1–W8). Its **§0a EXECUTION STATUS** block records
+what has run. **W1, W2a, W2b, W3 are DONE** (commits `77a1a11`, `609b93f`,
+`ffdc2f7`, `d437af0`). Framework is at **4.2.0**. One commit per item; do not
+batch. §5's verification protocol is mandatory.
+
+- [ ] **W4 — parent-fallback rename (D19).** `SM_FEATURE_HSM` →
+      `SM_FEATURE_PARENT_FALLBACK`, `SM_HSM_MAX_DEPTH` → `SM_PARENT_MAX_DEPTH`,
+      deprecated alias for one minor version. Compile it under test — that is
+      what clears the G10 WARN honestly — with a 3-level chain asserting that
+      intermediate entry/exit actions do **not** run, commented as the
+      documented limit rather than a bug. Fix the dangling
+      `sm_find_transition_hsm` reference at `sm_config.h:259`. **⚠ The brief's
+      §4 list is now one site short:** `SM_ABI_FINGERPRINT` in `sm_types.h`
+      references `SM_FEATURE_HSM` and must be renamed with it.
+- [ ] **W5 — HAL disposition (D20).** `SM_FEATURE_WATCHDOG` +
+      `SM_GetNextDeadline` (planned) + a tickless-idle example; document the four
+      application-facing calls; demote `IsTimeout`; `SimTick` behind
+      `SM_PLATFORM_SIM`; delete `src/app/app_main.c`. Record in CLAUDE.md why
+      any surviving G7 WARN stays — do **not** add stub tests to silence them.
+- [ ] **W6 — doc and measurement truth (F-D).** `README.md:364-367` and
+      CLAUDE.md still claim **~544 B RAM baseline**; measured is **316 B**
+      (Cortex-M4, `-Os`). Add a generated size report so it cannot drift again.
+      Restructure `config/sm_config_template.h`'s USAGE step 2, which still
+      tells the reader to define the dimensions in that header — the exact
+      thing that does not work.
+- [ ] **W7 — test-build divergence (F-B).** `tests/CMakeLists.txt` hardcodes
+      `SM_STATE_COUNT=4U` / `SM_EVENT_COUNT=8U` into a separate
+      `sm_framework_test` target, so the `PUBLIC` propagation that **is** the
+      v4.1 fix is never exercised by `ctest`. Derive the defs from the root
+      cache vars and add one test that links the real `sm_framework` target.
+      Prerequisite for W8 meaning anything.
+- [ ] **W8 — feature matrix + CI (D22).** 8-config compile sweep + full `ctest`
+      on 3, as the first `.github/workflows/`. **Named cost:** the `ASSERT=0`
+      config breaks every `TEST_EXPECT_ASSERT` case and must instead assert the
+      return-value path — which is finding 3.4's untested branch and the whole
+      reason that config matters. Budget for it.
+
+Still open from the 2026-08-22 dossier, unchanged: 1.5 internal transitions,
+1.13 multicore, 3.4 assert-then-return, 3.6 unshadowed DIS fields, 5.5 binary
+trace, 6.3 linear transition search, 11.1 c-bone frozen v3.0.0 fork.
+
+**Blocked (2026-08-22, unchanged):** the Opus/Sonnet review fleet never ran —
+monthly spend limit. Workflow resumable with `resumeFromRunId:
+wf_c3683e9d-143`. **All findings to date remain single-reviewer.**
+
 All phases complete. Active roadmap:
 - [ ] **Phase B — model as source of truth (`smgen`):** TOML machine models → generated C tables with build-failing validation, committed artifacts, round-trip verification against graphify's extractor, model hash in firmware. Full plan with decisions D12–D17 and phase gates B1–B4: `docs_dev/phase_b_model_plan.md`. **B1 complete** (smgen/ package: schema parser + V1–V10 validator + validate/hash CLI; pilot models in models/ validate clean; 39 Python tests in ctest). Next: B2 (C emitters, migrate blinky then basic).
 

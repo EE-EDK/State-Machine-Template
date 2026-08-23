@@ -31,6 +31,11 @@ REGISTER_RE = re.compile(
 RUN_TEST_RE = re.compile(r"\bRUN_TEST\s*\(\s*([A-Za-z_]\w*)\s*\)")
 DOC_TOKEN_RE = re.compile(r"\b(SM_[A-Za-z0-9_]+|App_Main_\w+)\b")
 DOC_FUNCLIKE_RE = re.compile(r"^SM_(?:[A-Z][a-z]\w*|[A-Za-z]+_[A-Z][a-z]\w*)$")
+#: `SM_Foo` immediately followed by a (planned) marker -- future API a
+#: roadmap names before it exists, as opposed to a stale reference to
+#: something removed. G8 treats the two differently.
+PLANNED_RE = re.compile(r"`([A-Za-z_]\w*)`\s*\((?:planned|new in W\d+|not yet)[^)]*\)",
+                        re.IGNORECASE)
 CLAUDE_TEST_CLAIM_RE = re.compile(r"(test_\w+\.c)\s*#\s*(\d+)\s+tests")
 
 
@@ -244,6 +249,7 @@ class DocsReport:
     mentions: dict[str, dict[str, int]]         # symbol -> doc -> count
     undocumented_api: list[str]                 # API fns with 0 user-doc hits
     stale: dict[str, list[str]]                 # doc -> unknown SM_ tokens
+    planned: dict[str, list[str]]               # doc -> tokens marked "(planned)"
     test_claims: list[tuple[str, int, int]]     # (file, claimed, actual)
     user_docs: tuple[str, ...] = ("README.md", "Quick-Guide.md")
 
@@ -265,6 +271,7 @@ def docs_xref(root: Path, g: Graph,
                   if f.name.startswith(("SM_", "App_"))})
 
     mentions: dict[str, dict[str, int]] = {}
+    planned: dict[str, list[str]] = {}
     stale: dict[str, list[str]] = {}
     claims: list[tuple[str, int, int]] = []
     for rel in doc_paths:
@@ -274,9 +281,18 @@ def docs_xref(root: Path, g: Graph,
             mentions.setdefault(tok, {}).setdefault(rel, 0)
             mentions[tok][rel] += 1
         if rel in ("README.md", "Quick-Guide.md", "CLAUDE.md"):
+            # A symbol the doc marks "(planned)" is future API, not a stale
+            # reference to something deleted. G8 cannot tell the two apart from
+            # the token alone -- only the doc knows -- so the doc says which.
+            # Marked tokens are still reported (INFO), so a plan that never
+            # lands cannot hide behind the marker.
+            marked = set(PLANNED_RE.findall(text))
             unknown = sorted({t for t in toks
                               if t not in known and not t.endswith("_")
                               and DOC_FUNCLIKE_RE.match(t)})
+            if marked & set(unknown):
+                planned[rel] = sorted(marked & set(unknown))
+            unknown = [t for t in unknown if t not in marked]
             if unknown:
                 stale[rel] = unknown
         if rel == "CLAUDE.md":
@@ -294,6 +310,7 @@ def docs_xref(root: Path, g: Graph,
                                 for d in user_docs)]
     return DocsReport(docs=doc_paths, mentions=mentions,
                       undocumented_api=undocumented, stale=stale,
+                      planned=planned,
                       test_claims=claims, user_docs=user_docs)
 
 

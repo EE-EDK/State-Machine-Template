@@ -161,6 +161,40 @@ class DisAtomicityRepoTests(unittest.TestCase):
                                    f"{fn.name}: exemption without a rationale")
 
 
+class PlannedDocSymbolTests(unittest.TestCase):
+    """G8 distinguishes "named before it exists" from "left behind".
+
+    The v4.2 TODO block names SM_GetNextDeadline as W5 work; G8 read that as a
+    stale reference, which is the opposite of the truth. Only the doc knows
+    which it means, so the doc marks it -- and marked symbols are still
+    reported (INFO) so a plan that never lands cannot hide behind the marker.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.docs = build_analysis(ROOT).docs
+
+    def test_planned_marker_recognised(self):
+        from graphify.link import PLANNED_RE
+        t = "`SM_A` (planned), `SM_B` (new in W5), `SM_C` (not yet), `SM_D`"
+        self.assertEqual(PLANNED_RE.findall(t), ["SM_A", "SM_B", "SM_C"])
+
+    def test_marked_symbols_are_not_stale(self):
+        for doc, toks in self.docs.stale.items():
+            for t in toks:
+                self.assertNotIn(t, self.docs.planned.get(doc, []),
+                                 f"{t} counted as both stale and planned")
+
+    def test_planned_symbols_really_do_not_exist(self):
+        g = build_analysis(ROOT).g
+        names = {f.name for f in g.functions.values()}
+        for doc, toks in self.docs.planned.items():
+            for t in toks:
+                self.assertNotIn(t, names,
+                                 f"{t} is marked planned in {doc} but exists "
+                                 f"-- drop the marker")
+
+
 class MetricsTests(unittest.TestCase):
     def test_algorithms_on_toy_graph(self):
         adj = {"a": {"b"}, "b": {"c"}, "c": {"a"}, "d": {"a"}, "e": set()}
