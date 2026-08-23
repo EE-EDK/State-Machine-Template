@@ -1,13 +1,13 @@
 # CLAUDE.md — State Machine Framework
 
 ## Project Summary
-Production-grade, modular state machine framework for embedded C systems. Handle-based, multi-instance, state-agnostic, zero-heap, ISR-safe. Platform-agnostic with weak-symbol HAL abstraction. Version 4.0.0 — the v4 semantic-correction release (strict-FIFO delivery, atomic transitions, bounded event drain, ms deadline-based timers) on top of the completed v3 rewrite.
+Production-grade, modular state machine framework for embedded C systems. Handle-based, multi-instance, state-agnostic, zero-heap, ISR-safe. Platform-agnostic with weak-symbol HAL abstraction. Version 4.1.0 — the build-consistency release (fixed reserved `SM_EVT_TIMEOUT` id, build-wide FSM dimensions verified at `SM_Init`, atomic DIS pairs, timer-schedule lifecycle) on top of v4.0's semantic-correction release (strict-FIFO delivery, atomic transitions, bounded event drain, ms deadline-based timers).
 
 ## Directory Structure
 ```
 state-machine-template/
-├── include/sm_framework/   # Public API headers (v3.0)
-│   ├── sm_framework.h      # Umbrella header (version 3.0.0)
+├── include/sm_framework/   # Public API headers (v4.1)
+│   ├── sm_framework.h      # Umbrella header (version 4.1.0)
 │   ├── sm_config.h         # Config defaults (SM_STATE_COUNT/SM_EVENT_COUNT required)
 │   ├── sm_types.h          # All types: SM_Context, SM_Handle_t, events, transitions, time events
 │   ├── sm_safety.h         # Safety macros: SM_DEFINE_MODULE, SM_REQUIRE, DIS, bounded loops
@@ -73,9 +73,9 @@ state-machine-template/
 │                               # 10 tests each: NULL/edge contracts per subsystem
 │                               # (239 RUN_TEST cases total across 20 suites)
 ├── CMakeLists.txt          # Build system (cmake 3.15+, C99)
-├── Quick-Guide.md          # v3.0 quick reference
+├── Quick-Guide.md          # v4.1 quick reference
 ├── MIGRATION.md            # v2→v3 migration guide
-└── README.md               # v3.0 project documentation
+└── README.md               # v4.1 project documentation
 ```
 
 ## Build Commands
@@ -99,8 +99,8 @@ add_subdirectory(path/to/state-machine-template)
 target_link_libraries(your_target sm_framework)
 ```
 
-## Key Architecture (v4.0)
-- **State-agnostic:** User defines all states/events via enums + SM_STATE_COUNT/SM_EVENT_COUNT (1..65534; SM_EVT_TIMEOUT occupies SM_EVENT_COUNT)
+## Key Architecture (v4.1)
+- **State-agnostic:** User defines all states/events via enums; SM_STATE_COUNT (1..255) and SM_EVENT_COUNT (1..65535) are set once per BUILD (CMake cache vars, PUBLIC on sm_framework) because they are compiled into the framework itself; `SM_Init` rejects an application compiled with different values (assertion 105/106). SM_EVT_TIMEOUT is the fixed reserved id 0xFFFF, outside the user range
 - **Handle-based:** SM_Handle_t = SM_Context_t*, no extern globals, multi-instance
 - **ISR-safe event queue:** Strict FIFO in post order for ALL sources (user/ISR/timeout/timer); frontEvt slot is a fast path used only when the queue is completely empty (QP/C D6 revised); SM_EventQueueIsFull mirrors SM_PostEvent exactly
 - **Const flash transitions:** SM_Transition_t[] in ROM with guard conditions + actions
@@ -160,7 +160,9 @@ Maintenance items:
 
 ## Session Continuity
 
-**Last session:** 2026-08-22 — graphify v2 typed graph + full "perfect state machine" review; findings (not a plan) in `docs_dev/review_findings_2026-08-22.md`
+**Last session:** 2026-08-22 — graphify v2 typed graph, full "perfect state machine" review, and the v4.1.0 fixes it justified
+
+**2026-08-22 — v4.1.0 build-consistency + lifecycle release (commits `9427166`, `6ee7768`):** Implemented the review's root-cause findings, in dependency order so nothing was rewritten twice. **(1) ABI.** `SM_EVT_TIMEOUT` was `SM_EVENT_COUNT`, so it differed between the library and every application: the engine posted its value while app tables matched on theirs, and **every `SM_EVT_TIMEOUT` route in the repo was dead code** (reproduced by linking a 6-state/2-event program against the shipped library: `SM_Init` asserted on a valid initial state, `SM_PostEvent` accepted out-of-range ids, the timeout never fired). Fixed by making it a fixed reserved id `0xFFFF`; the FSM dimensions became CMake cache vars applied **PUBLIC** to `sm_framework`; examples stopped re-`#define`-ing them; `SM_Init` is now a macro over `SM_Init_` carrying the app's dimensions, rejecting a mismatch with assertion 105/106. **(2) Lifecycle.** `SM_Reset` disarms the timer schedule (armed timers used to keep firing into the reset machine); `SM_TimeEvt_Init` unlinks a scheduled timer instead of orphaning the list behind it — by searching the owner's list, **not** by reading `te->armed`, because timers are often stack-allocated (the first attempt read it and segfaulted `test_time_events`); new `SM_DIS_ASSIGN` writes each DIS field/shadow pair inside one critical section (they were separately observable, so an ISR calling a documented ISR-safe reader between them asserted on healthy data); `SM_DeferEvent` validates ids; `sm_debug.c` gained a module + 800-899 assertion block. **Verification pattern worth repeating:** example stdout captured as a golden baseline before changes (all six stayed byte-identical) and new tests compiled against the pre-fix engine via `git archive HEAD` — 6 of 11 fail there, proving they detect rather than decorate. **graphify had to learn two things this exposed:** writes through a macro's lvalue argument (routing writes through `SM_DIS_ASSIGN` silently deleted every DIS write edge) and API coverage through macro expansion. ctest **23/23**, zero warnings, G-checks **1 ERROR + 17 WARN → 0 ERROR + 8 WARN**. Still open (need design decisions): MINOR tier unimplemented, HSM half-feature, dead HAL surface, no ISR-interleaving harness, no feature-matrix build — see the status table in `docs_dev/review_findings_2026-08-22.md`.
 
 **2026-08-22 — graphify v2 + review findings:** graphify rewritten as a typed knowledge graph (scoped call resolution, macro variants, struct-field read/write edges, critical-section spans, ISR contracts, machine↔code bindings, model round-trip, docs xref, metrics, G1–G15 validators, `graph.html` viewer; 29 unit tests in ctest). Review produced `docs_dev/review_findings_2026-08-22.md` — ~90 tagged findings/ideas across engine, timers, error/safety, API/ABI, debug, memory, tests, docs, build, smgen/graphify, workspace consumers, topology. Headline verified defects: the prebuilt library bakes `SM_STATE_COUNT=4U/SM_EVENT_COUNT=8U` so apps with more states assert in `SM_Init` and every example's `SM_EVT_TIMEOUT` route is dead (G15); field+DIS-shadow two-store races vs ISR-safe readers (G14); armed timers survive `SM_Reset`; `SM_TimeEvt_Init` on an armed timer truncates the list; measured Cortex-M4 `sizeof(SM_Context_t)`=316 B vs documented ~544. The Opus/Sonnet review fleet was blocked by the account spend limit — its workflow script is saved and resumable (see memory). **Next:** turn the findings list into a plan (user's call on ordering).
 

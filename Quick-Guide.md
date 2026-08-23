@@ -1,8 +1,8 @@
-# Quick Guide -- State Machine Framework v4.0
+# Quick Guide -- State Machine Framework v4.1
 
 Handle-based, multi-instance, zero-heap, ISR-safe state machine framework for embedded C.
 
-v4.0 semantics in one paragraph: events are delivered strict-FIFO in post
+v4 semantics in one paragraph: events are delivered strict-FIFO in post
 order; each `SM_Process` call drains up to `SM_MAX_EVENTS_PER_PROCESS`
 events; a transition runs exit → action → entry atomically within that
 call; time events are millisecond deadlines against
@@ -14,8 +14,8 @@ other event.
 
 ## Step 1: Define Your States and Events
 
-Define application states and events as enums. Set `SM_STATE_COUNT` and `SM_EVENT_COUNT`
-before including the framework header -- both are mandatory (`#error` if missing).
+Define application states and events as enums. The framework imposes no
+application semantics; it only needs to know how many of each there are.
 
 ```c
 /* app_config.h */
@@ -35,10 +35,18 @@ typedef enum {
     EVT_RECOVER,
     EVT_TIMEOUT
 } AppEvent_t;
-
-#define SM_STATE_COUNT  4
-#define SM_EVENT_COUNT  5
 ```
+
+Your enums stay in your source. The **dimensions** go in the build, because
+the framework itself is compiled with them (v4.1):
+
+```bash
+cmake -DSM_STATE_COUNT=4 -DSM_EVENT_COUNT=5 ..
+```
+
+Do not `#define SM_STATE_COUNT` in an application file: the framework's own
+`.c` files never see it, and `SM_Init` will reject the mismatch. See the
+Configuration section of `README.md`.
 
 ---
 

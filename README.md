@@ -1,10 +1,10 @@
-# State Machine Framework v4.0
+# State Machine Framework v4.1
 
 Production-grade, handle-based state machine framework for embedded C systems. State-agnostic, multi-instance, zero-heap, ISR-safe. Designed for bare-metal microcontrollers from Cortex-M0 to application processors, with a weak-symbol HAL that ports in minutes.
 
 Built on patterns from QP/C 8.x: frontEvt fast path, Duplicate Inverse Storage, numeric assertion IDs, and intrusive time-event linked lists.
 
-v4.0 corrects the engine's execution semantics: strict-FIFO event delivery for all sources, atomic exit→action→entry transitions, a bounded multi-event drain per `SM_Process`, and millisecond deadline-based (drift-free) time events. See `MIGRATION.md` for the v3.0 → v4.0 changes.
+v4.0 corrected the engine's execution semantics: strict-FIFO event delivery for all sources, atomic exit→action→entry transitions, a bounded multi-event drain per `SM_Process`, and millisecond deadline-based (drift-free) time events. v4.1 closes a build-consistency defect: `SM_EVT_TIMEOUT` is now a fixed reserved id and the FSM dimensions are set once per build, so a library and its application can no longer disagree about them. See `MIGRATION.md` for both upgrades.
 
 ## Features
 
@@ -28,10 +28,11 @@ v4.0 corrects the engine's execution semantics: strict-FIFO event delivery for a
 ## Quick Start
 
 ```c
-/* app_config.h -- must be included before the framework header */
-#define SM_STATE_COUNT  3
-#define SM_EVENT_COUNT  2
-
+/* SM_STATE_COUNT / SM_EVENT_COUNT come from the BUILD, not from this file:
+ *   cmake -DSM_STATE_COUNT=3 -DSM_EVENT_COUNT=2 ..
+ * They are compiled into the framework itself, so the library and your
+ * application must see identical values -- see "Configuration" below.
+ * SM_Init rejects a mismatched build rather than misbehaving later (v4.1). */
 #include "sm_framework/sm_framework.h"
 #include <stdio.h>
 
@@ -129,16 +130,24 @@ Each state is described by an `SM_StateDesc_t` with three callbacks (`on_entry`,
 
 ## Configuration
 
-Configuration uses the `#ifndef` override pattern. Define values in your `app_config.h` **before** including `sm_framework.h`. Copy `config/sm_config_template.h` as a starting point.
+Configuration uses the `#ifndef` override pattern. Copy `config/sm_config_template.h` as a starting point.
 
-### Mandatory defines
+### Mandatory dimensions -- set once per build (v4.1)
 
-```c
-#define SM_STATE_COUNT    (4U)   /* Number of states in your FSM */
-#define SM_EVENT_COUNT    (6U)   /* Number of events in your FSM */
+```bash
+cmake -DSM_STATE_COUNT=4 -DSM_EVENT_COUNT=6 ..
 ```
 
-These are enforced with `#error` -- the framework will not compile without them.
+`SM_STATE_COUNT` and `SM_EVENT_COUNT` are enforced with `#error` -- the framework will not compile without them. They are **not per-file settings**: they are compiled into the framework's own translation units, where they drive `SM_Init`'s initial-state check, `SM_PostEvent`'s accept range, and (with statistics enabled) `SM_Context_t`'s layout.
+
+So the library and every application linked against it must be compiled with the same values. Two supported ways:
+
+- **Set them in your build** (what this repository does). The `sm_framework` target propagates them `PUBLIC`, so linking it is enough for your own targets to inherit them.
+- **Compile the framework as part of your application** (`add_subdirectory`) and force-include a shared config header into *every* target: `-include app_config.h`.
+
+What does **not** work is `#define SM_STATE_COUNT` in an application source: the framework's `.c` files never see it, so the two sides diverge silently. Before v4.1 that is exactly what the examples in this repository did, and it made every `SM_EVT_TIMEOUT` transition dead code. `SM_Init` now rejects a mismatch (assertion 105/106) instead of letting it through.
+
+The same applies to any macro that changes `SM_Context_t`'s layout -- `SM_EVENT_QUEUE_SIZE`, `SM_ERROR_HISTORY_SIZE`, `SM_STATE_HISTORY_DEPTH`, `SM_MAX_TRANSITIONS`, `SM_DEFER_QUEUE_SIZE` and the `SM_FEATURE_*` flags.
 
 ### Optional overrides (with defaults)
 
@@ -399,6 +408,7 @@ MIT License. See [LICENSE](LICENSE).
 
 | Version | Date | Description |
 |---------|------|-------------|
+| **v4.1.0** | 2026-08-22 | Build-consistency release: `SM_EVT_TIMEOUT` is a fixed reserved id (0xFFFF) instead of `SM_EVENT_COUNT`, FSM dimensions set once per build and propagated to every target, `SM_Init` rejects a mismatched build, DIS field/shadow pairs written atomically, `SM_Reset` disarms the timer schedule, `SM_TimeEvt_Init` no longer truncates the timer list, `SM_DeferEvent` validates event ids. See MIGRATION.md |
 | **v4.0.0** | 2026-08-03 | Semantic correction release: strict-FIFO event delivery for all sources, atomic exit→action→entry transitions, bounded multi-event drain per SM_Process, millisecond deadline-based drift-free time events with enforced capacity, public SM_EVT_TIMEOUT, exact SM_EventQueueIsFull, true front-insert recall that preserves the event on a full queue. See MIGRATION.md |
 | v3.0.0 | 2026-04-18 | Complete rewrite: handle-based multi-instance, state-agnostic, QP/C patterns (frontEvt, DIS, time events, deferred events), 3-tier error handler, per-module debug tags, weak-symbol HAL with watchdog/sleep/NVS/capabilities, 118 unit tests |
 | v2.0.0 | 2025-12-30 | Modular rewrite: platform abstraction, CMake build, 10 pre-configured states |

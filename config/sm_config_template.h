@@ -22,28 +22,61 @@
  * REQUIRED: Application MUST define these
  * ===========================================================================*/
 
+/* =============================================================================
+ * BUILD-WIDE DIMENSIONS -- READ THIS FIRST (v4.1)
+ *
+ * The two macros below are compiled into the FRAMEWORK's translation units,
+ * not just yours: they drive SM_Init's initial-state check, SM_PostEvent's
+ * accept range, and (with statistics on) SM_Context_t's layout.
+ *
+ * Defining them in a header that only YOUR sources include leaves the
+ * framework compiled with different values, and the two sides then disagree
+ * silently. Use one of:
+ *
+ *   1. Set them in your build system, for every target:
+ *          cmake -DSM_STATE_COUNT=4 -DSM_EVENT_COUNT=6 ..
+ *      (the sm_framework target propagates them PUBLIC to whatever links it)
+ *
+ *   2. Compile the framework as part of your application and force-include
+ *      this file into EVERY target, framework sources included:
+ *          target_compile_options(<tgt> PRIVATE -include app_config.h)
+ *
+ * SM_Init verifies the match at runtime and fails with assertion 105/106
+ * rather than misbehaving later.
+ *
+ * The same rule applies to every macro further down that changes
+ * SM_Context_t's layout: SM_EVENT_QUEUE_SIZE, SM_ERROR_HISTORY_SIZE,
+ * SM_STATE_HISTORY_DEPTH, SM_MAX_TRANSITIONS, SM_DEFER_QUEUE_SIZE and the
+ * SM_FEATURE_* flags.
+ * ===========================================================================*/
+
 /**
  * @brief Number of states in your FSM
  *
- * Must match the number of entries in your state enum.
+ * Must be at least the number of entries in your state enum.
  * The framework does NOT define any states -- you define your own.
  *
  * Example:
  *   typedef enum { STATE_INIT = 0, STATE_RUNNING, STATE_STOPPED, MY_STATE_COUNT } MyState_t;
  *   #define SM_STATE_COUNT  MY_STATE_COUNT
  */
+#ifndef SM_STATE_COUNT
 #define SM_STATE_COUNT    (4U)
+#endif
 
 /**
  * @brief Number of events in your FSM
  *
- * Must match the number of entries in your event enum.
+ * Must be at least the number of entries in your event enum. The reserved
+ * id SM_EVT_TIMEOUT (0xFFFF) sits outside this range and costs you nothing.
  *
  * Example:
- *   typedef enum { EVT_START = 0, EVT_STOP, EVT_TIMEOUT, MY_EVT_COUNT } MyEvent_t;
+ *   typedef enum { EVT_START = 0, EVT_STOP, EVT_FAULT, MY_EVT_COUNT } MyEvent_t;
  *   #define SM_EVENT_COUNT  MY_EVT_COUNT
  */
+#ifndef SM_EVENT_COUNT
 #define SM_EVENT_COUNT    (6U)
+#endif
 
 /* =============================================================================
  * EVENT QUEUE (optional overrides)
