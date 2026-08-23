@@ -427,7 +427,11 @@ bool SM_Init_(SM_Handle_t sm, const SM_Config_t *config,
      * an instance under construction is not yet observable by contract --
      * the memset above already precludes concurrent access. Every DIS update
      * on a LIVE machine (sm_execute_transition, SM_Reset, SM_Error_Report)
-     * is indivisible instead. */
+     * is indivisible instead.
+     *
+     * DIS-ATOMIC-EXEMPT: instance under construction, not yet observable; the
+     * memset above already precludes concurrent access. Applies to all three
+     * pairs written below (state, critical_lock, initialized). */
     sm->current_state = config->initial_state;
     sm->previous_state = config->initial_state;
     SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);

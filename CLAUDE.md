@@ -160,7 +160,52 @@ Maintenance items:
 
 ## Session Continuity
 
-**Last session:** 2026-08-22 — graphify v2 typed graph, full "perfect state machine" review, and the v4.1.0 fixes it justified
+**Last session:** 2026-08-23 — v4.2.0 execution brief (D18–D24, W1–W8); W1 and W2b landed
+
+**2026-08-23 — W1 ABI fingerprint + W2b graphify G16:** Working the directive
+brief at `docs_dev/state-machine-template_execution-brief_v1.0.md`.
+
+**W1 (D23).** v4.1's guard checked two macros; the application allocates
+`SM_Context_t` and its layout depends on eight, plus several more that change
+engine semantics without moving a field. Finding F-A — the same defect class
+v4.1 shipped to fix, with a worse residue. `SM_ABI_FINGERPRINT` folds
+`sizeof(SM_Context_t)` with every layout- and semantics-affecting macro;
+`SM_Init_` carries it; assertion **107** compares it, placed *above* the memset
+so nothing dereferences `sm` until the layout is known to agree. **Reproduced,
+not argued:** an app at `SM_EVENT_QUEUE_SIZE=4` against the library at 8 —
+v4.1 returned true and clobbered **64 canary bytes past the end of the caller's
+object**; v4.2 fires 107 with the canary intact. `tests/test_abi_guard.c` is
+that reproduction in ctest (one source, two targets), and it also covers 105
+and 106, which v4.1 had shipped **with no test at all**.
+
+**W2b (F-C).** DIS write-atomicity is a *structural* property, so it is proven
+statically rather than by a race test — a hook on the critical-section boundary
+has no seam to fire in between two adjacent non-critical stores, so a runtime
+harness would report "no tear" against precisely the buggy code. **G16** checks
+that both stores of every DIS pair fall inside one critical section.
+**Detector demonstrated:** clean on HEAD (3 INFO, all `SM_Init_` construction,
+exemption stated in-source via a `DIS-ATOMIC-EXEMPT:` marker that the report
+still prints), and **6 ERROR against `9427166~1`** — including the three
+live-machine sites (`sm_execute_transition`, `SM_Reset`, `SM_Error_Report`)
+that v4.1 fixed. This is what retires the prior session's "the DIS race fix is
+unproven by test" caveat: it is now proven by static invariant with the
+detector shown to fire on the known-bad revision. The runtime harness (W2a)
+remains outstanding and covers the *dynamic* claims only — queue index races,
+watermark, timer-list integrity during tick, recall-vs-post.
+
+**Correction carried forward** (from the brief, verified this session): the 8
+remaining G-check WARNs are **7 × G7-untested-api + 1 × G10**, not "seven HAL
+stubs". `App_Main_GetVersion` is not HAL, and `SM_Platform_OutputSend` *is*
+exercised (via `sm_debug.c`) but has no direct test caller. `IsTimeout`,
+`NVS_Read`, `NVS_Write`, `GetResetReason`, `HasCapability` and
+`GetCriticalNesting` are called by `tests/test_hal.c` and are not warned.
+
+**Environment note:** this shell's heredocs eat backslash-newline pairs, which
+silently collapses multi-line C macros onto one line and turns regex `\b` into
+a backspace. Write patch scripts to a file and run them; never heredoc anything
+containing a backslash.
+
+**2026-08-22 — graphify v2 typed graph, full "perfect state machine" review, and the v4.1.0 fixes it justified
 
 **2026-08-22 — v4.1.0 build-consistency + lifecycle release (commits `9427166`, `6ee7768`):** Implemented the review's root-cause findings, in dependency order so nothing was rewritten twice. **(1) ABI.** `SM_EVT_TIMEOUT` was `SM_EVENT_COUNT`, so it differed between the library and every application: the engine posted its value while app tables matched on theirs, and **every `SM_EVT_TIMEOUT` route in the repo was dead code** (reproduced by linking a 6-state/2-event program against the shipped library: `SM_Init` asserted on a valid initial state, `SM_PostEvent` accepted out-of-range ids, the timeout never fired). Fixed by making it a fixed reserved id `0xFFFF`; the FSM dimensions became CMake cache vars applied **PUBLIC** to `sm_framework`; examples stopped re-`#define`-ing them; `SM_Init` is now a macro over `SM_Init_` carrying the app's dimensions, rejecting a mismatch with assertion 105/106. **(2) Lifecycle.** `SM_Reset` disarms the timer schedule (armed timers used to keep firing into the reset machine); `SM_TimeEvt_Init` unlinks a scheduled timer instead of orphaning the list behind it — by searching the owner's list, **not** by reading `te->armed`, because timers are often stack-allocated (the first attempt read it and segfaulted `test_time_events`); new `SM_DIS_ASSIGN` writes each DIS field/shadow pair inside one critical section (they were separately observable, so an ISR calling a documented ISR-safe reader between them asserted on healthy data); `SM_DeferEvent` validates ids; `sm_debug.c` gained a module + 800-899 assertion block. **Verification pattern worth repeating:** example stdout captured as a golden baseline before changes (all six stayed byte-identical) and new tests compiled against the pre-fix engine via `git archive HEAD` — 6 of 11 fail there, proving they detect rather than decorate. **graphify had to learn two things this exposed:** writes through a macro's lvalue argument (routing writes through `SM_DIS_ASSIGN` silently deleted every DIS write edge) and API coverage through macro expansion. ctest **23/23**, zero warnings, G-checks **1 ERROR + 17 WARN → 0 ERROR + 8 WARN**. Still open (need design decisions): MINOR tier unimplemented, HSM half-feature, dead HAL surface, no ISR-interleaving harness, no feature-matrix build — see the status table in `docs_dev/review_findings_2026-08-22.md`.
 
@@ -190,11 +235,11 @@ the repo-local `graphify/` Python package (stdlib-only, committed with the
 repo — works in any clone, no install needed).
 
 Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md. v2 (2026-08-22) sections: G-check validator findings (G1 duplicate assertion IDs, G3 no SM_DEFINE_MODULE, G4 unbalanced critsec, G5 ISR-contract violations, G6 call cycles, G7 untested API, G8 undocumented/stale docs + CLAUDE.md test-count claims, G9 model↔example round-trip, G10 feature flags never compiled under test, G11 unreached callbacks, G12 never-overridden weak HAL, G13 articulation points, G14 volatile writes outside critical sections), topology (bow-tie, layers, SCCs, articulation points, degree signature), god nodes with betweenness/PageRank, interface layer (decl → weak/override implementations), feature gates, config macros, **state access matrix** (writers/readers per `SM_Context` field), critical sections + documented ISR contracts, assertion map, macro expansion map, machine↔code callback bindings, test inventory / API coverage, docs cross-reference, models↔examples round-trip, Python tooling, directory + structural communities
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md. v2 (2026-08-22) sections: G-check validator findings (G1 duplicate assertion IDs, G3 no SM_DEFINE_MODULE, G4 unbalanced critsec, G5 ISR-contract violations, G6 call cycles, G7 untested API, G8 undocumented/stale docs + CLAUDE.md test-count claims, G9 model↔example round-trip, G10 feature flags never compiled under test, G11 unreached callbacks, G12 never-overridden weak HAL, G13 articulation points, G14 volatile writes outside critical sections, **G16 DIS pair write atomicity**), topology (bow-tie, layers, SCCs, articulation points, degree signature), god nodes with betweenness/PageRank, interface layer (decl → weak/override implementations), feature gates, config macros, **state access matrix** (writers/readers per `SM_Context` field), critical sections + documented ISR contracts, assertion map, macro expansion map, machine↔code callback bindings, test inventory / API coverage, docs cross-reference, models↔examples round-trip, Python tooling, directory + structural communities
 - For questions about a specific state machine (states, transitions, timeouts), read graphify-out/MACHINES.md — per-machine Mermaid diagrams, timing tables, and validator findings (V1 unreachable states, V2 timeout without SM_EVT_TIMEOUT route, V3 dwell>timeout, V4 terminal states, V5 fully-guarded events). Application machines and test fixtures are listed separately; only application WARNs matter
 - If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
 - graphify-out/graph.json is the typed node/edge/metrics/findings export for downstream tools; graphify-out/graph.html is a self-contained interactive viewer (open in a browser; filter by node/edge kind, color by community/layer)
 - After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` (or `python3 -m graphify.watch`) from the repo root to keep the graph current. Run from the repo root: a workspace-level `graphify` package in site-packages shadows this one otherwise
 - graphify-out/ stays gitignored (ephemeral, regenerable output)
-- `ctest` runs `test_graphify_unit` (graphify/tests: extractor fixtures + real-repo invariants such as the single-writer set for `SM_Context.current_state`, ISR contracts, model round-trip MATCH, no call cycles) — a checker nobody has tested is a checker nobody should trust
+- `ctest` runs `test_graphify_unit` (graphify/tests: extractor fixtures + real-repo invariants such as the single-writer set for `SM_Context.current_state`, ISR contracts, model round-trip MATCH, no call cycles, **G16 DIS write-atomicity**) — a checker nobody has tested is a checker nobody should trust. G16's own detector was demonstrated by mutation (forcing `protected = True` fails 2 cases) and against the known-bad revision, below
 - Planned: swap the regex extraction layer (cparse.py + analyze.py only) for a clang/libclang AST analyzer (see TODO) — the dataclasses, graph.json and report format are the stable contract

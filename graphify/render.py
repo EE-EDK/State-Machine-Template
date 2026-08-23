@@ -247,6 +247,39 @@ def _validate(a: Analysis) -> list[Finding]:
                                f"`{short(fn.key)}` writes volatile "
                                f"{', '.join(f'`{r}`' for r in sorted(fn.unprotected_volatile))} "
                                f"outside a critical section"))
+    # G16 DIS field/shadow pair written non-atomically (library)
+    #
+    # D7 stores a safety-critical field twice: the value and its bitwise
+    # inverse. A reader verifies the two agree. That only detects corruption if
+    # the two stores are indivisible -- otherwise a reader running between them
+    # sees a mismatch and asserts on data that was never corrupt.
+    #
+    # An SM_DIS_UPDATE outside a critical section is exactly that condition:
+    # the shadow moves while the field's own store sits somewhere else. This is
+    # checked statically because it cannot be checked dynamically -- a hook on
+    # the critical-section boundary has no seam to fire in between two adjacent
+    # non-critical stores, so a runtime race harness reports "no tear" against
+    # precisely the code that has one (brief F-C).
+    for fn in sorted(g.functions.values(), key=lambda f: (f.file, f.line)):
+        if fn.unit != "lib" or not fn.dis_sites:
+            continue
+        for kind, fexpr, dexpr, line, protected in fn.dis_sites:
+            if protected:
+                continue
+            where = f"`{short(fn.key)}`:{line}"
+            if fn.dis_exempt:
+                out.append(Finding(
+                    "INFO", "G16-dis-write-exempt",
+                    f"{where} writes the DIS pair "
+                    f"`{fexpr}` / `{dexpr}` non-atomically, exempted: "
+                    f"{fn.dis_exempt}"))
+            else:
+                out.append(Finding(
+                    "ERROR", "G16-dis-write-torn",
+                    f"{where} `{kind}({fexpr}, {dexpr}, ...)` is outside any "
+                    f"critical section, so the field and its shadow are "
+                    f"separately observable. Use SM_DIS_ASSIGN, or place both "
+                    f"stores in one critical section."))
     # G11 callback bound in a table but never invoked by any engine path
     for b in a.bindings:
         if not b.indirect_from:
@@ -524,6 +557,28 @@ def render_report(a: Analysis) -> str:
     for f in sorted(g.functions.values(), key=lambda f: (f.file, f.line)):
         if f.unit == "lib" and f.unprotected_volatile:
             w(f"- `{f.name}`: {', '.join(f'`{r}`' for r in sorted(f.unprotected_volatile))}")
+
+    w("")
+    w("### DIS pair writes (D7)")
+    w("")
+    w("Every write to a duplicate-inverse-storage pair, and whether the two "
+      "stores are indivisible. `SM_DIS_ASSIGN` takes the critical section "
+      "itself; a bare `SM_DIS_UPDATE` is only atomic inside one. G16 checks "
+      "this column.")
+    w("")
+    w("| function | line | write | pair | atomic |")
+    w("|---|---|---|---|---|")
+    _any_dis = False
+    for f in sorted(g.functions.values(), key=lambda x: (x.file, x.line)):
+        if f.unit != "lib":
+            continue
+        for kind, fexpr, dexpr, line, protected in f.dis_sites:
+            _any_dis = True
+            mark = "yes" if protected else ("exempt" if f.dis_exempt else "**NO**")
+            w(f"| `{f.name}` | {line} | `{kind}` | `{fexpr}` / `{dexpr}` "
+              f"| {mark} |")
+    if not _any_dis:
+        w("| _(none)_ | | | | |")
     w("")
 
     # ---- Assertions
@@ -797,6 +852,8 @@ def graph_json(a: Analysis) -> dict:
             "critsec": f.crit_enter, "layer": a.layer.get(k, 0),
             "struct_comm": a.lp.get(k, -1), "lib_comm": a.lp_lib.get(k, -1),
             "unprotected_volatile": sorted(f.unprotected_volatile),
+            "dis_sites": [list(x) for x in f.dis_sites],
+            "dis_exempt": f.dis_exempt,
             "betweenness": round(a.bc.get(k, 0), 1),
             "pagerank": round(a.pr.get(k, 0), 6),
             "articulation": k in a.aps, "body_lines": f.body_lines,

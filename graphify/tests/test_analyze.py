@@ -360,3 +360,129 @@ class LvalueMacroTests(unittest.TestCase):
         v = g.functions["verify@src/core/v.c"]
         self.assertEqual(v.writes, set())
         self.assertIn("SM_Context.current_state", v.reads)
+
+
+class DisAtomicityTests(unittest.TestCase):
+    """G16: both stores of a DIS pair must fall inside one critical section.
+
+    The detector is demonstrated against the repository's own known-bad
+    revision in test_repo.py's docstring and in CLAUDE.md; these fixtures pin
+    the three shapes it has to tell apart.
+    """
+
+    HDR = """
+        #ifndef D_H
+        #define D_H
+        #include <stdint.h>
+        typedef struct SM_Context SM_Context_t;
+        typedef SM_Context_t *SM_Handle_t;
+        struct SM_Context {
+            volatile uint16_t current_state;
+            uint16_t state_dis;
+        };
+        #define SM_DIS_UPDATE(f_, d_, t_)  ((d_) = (t_)(~(t_)(f_)))
+        #define SM_DIS_ASSIGN(f_, d_, t_, v_) do { \\
+            SM_Platform_EnterCritical(); (f_) = (v_); \\
+            SM_DIS_UPDATE((f_), (d_), t_); \\
+            SM_Platform_ExitCritical(); } while (0)
+        void SM_Platform_EnterCritical(void);
+        void SM_Platform_ExitCritical(void);
+        #endif
+    """
+
+    def _graph(self, engine: str):
+        root = _repo({"include/d.h": self.HDR,
+                      "src/core/sm_engine.c": engine})
+        return build_graph(root)
+
+    def _sites(self, g, name):
+        for fn in g.functions.values():
+            if fn.name == name:
+                return fn
+        self.fail(f"function {name} not extracted")
+
+    def test_bare_update_outside_critsec_is_torn(self):
+        g = self._graph("""
+            #include "d.h"
+            void torn(SM_Handle_t sm)
+            {
+                sm->current_state = 3U;
+                SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
+            }
+        """)
+        fn = self._sites(g, "torn")
+        self.assertEqual(len(fn.dis_sites), 1)
+        kind, fexpr, dexpr, _line, protected = fn.dis_sites[0]
+        self.assertEqual(kind, "SM_DIS_UPDATE")
+        self.assertEqual(fexpr, "sm->current_state")
+        self.assertEqual(dexpr, "sm->state_dis")
+        self.assertFalse(protected, "a bare update outside a critsec is torn")
+        self.assertEqual(fn.dis_exempt, "")
+
+    def test_update_inside_critsec_is_atomic(self):
+        g = self._graph("""
+            #include "d.h"
+            void guarded(SM_Handle_t sm)
+            {
+                SM_Platform_EnterCritical();
+                sm->current_state = 3U;
+                SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
+                SM_Platform_ExitCritical();
+            }
+        """)
+        fn = self._sites(g, "guarded")
+        self.assertEqual(len(fn.dis_sites), 1)
+        self.assertTrue(fn.dis_sites[0][4],
+                        "an update inside a critical section is indivisible")
+
+    def test_dis_assign_is_atomic_anywhere(self):
+        g = self._graph("""
+            #include "d.h"
+            void assigned(SM_Handle_t sm)
+            {
+                SM_DIS_ASSIGN(sm->current_state, sm->state_dis, uint16_t, 3U);
+            }
+        """)
+        fn = self._sites(g, "assigned")
+        self.assertEqual(len(fn.dis_sites), 1)
+        self.assertEqual(fn.dis_sites[0][0], "SM_DIS_ASSIGN")
+        self.assertTrue(fn.dis_sites[0][4],
+                        "SM_DIS_ASSIGN takes the critical section itself")
+
+    def test_exemption_marker_is_read_whole(self):
+        g = self._graph("""
+            #include "d.h"
+            void constructing(SM_Handle_t sm)
+            {
+                /* DIS-ATOMIC-EXEMPT: instance under construction,
+                 * not yet observable by any reader. */
+                sm->current_state = 0U;
+                SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
+            }
+        """)
+        fn = self._sites(g, "constructing")
+        self.assertFalse(fn.dis_sites[0][4], "still recorded as non-atomic")
+        # The rationale must survive the line break -- a one-line cap used to
+        # truncate it mid-sentence, which reads as a checker bug in the report.
+        self.assertIn("instance under construction", fn.dis_exempt)
+        self.assertIn("not yet observable", fn.dis_exempt)
+        self.assertNotIn("*", fn.dis_exempt)
+
+    def test_exemption_does_not_leak_to_other_functions(self):
+        g = self._graph("""
+            #include "d.h"
+            void excused(SM_Handle_t sm)
+            {
+                /* DIS-ATOMIC-EXEMPT: under construction. */
+                sm->current_state = 0U;
+                SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
+            }
+            void not_excused(SM_Handle_t sm)
+            {
+                sm->current_state = 1U;
+                SM_DIS_UPDATE(sm->current_state, sm->state_dis, uint16_t);
+            }
+        """)
+        self.assertNotEqual(self._sites(g, "excused").dis_exempt, "")
+        self.assertEqual(self._sites(g, "not_excused").dis_exempt, "",
+                         "an exemption is scoped to the body that states it")

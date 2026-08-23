@@ -104,6 +104,63 @@ class RepoInvariants(unittest.TestCase):
             self.assertIn(e["dst"], ids)
 
 
+class DisAtomicityRepoTests(unittest.TestCase):
+    """The v4.1 DIS fix, pinned as a repository invariant.
+
+    The 2026-08-22 review found the field and its shadow written as two
+    separately observable stores, so an ISR calling a documented ISR-safe
+    reader between them asserted on data that was never corrupt. v4.1 routed
+    every live-machine write through SM_DIS_ASSIGN. That fix was, until W2b,
+    unproven by test -- and it cannot be proven by a runtime race harness,
+    because a hook on the critical-section boundary has no seam to fire in
+    between two adjacent non-critical stores (brief F-C).
+
+    G16 proves it structurally instead. The detector was demonstrated against
+    the known-bad revision 9427166~1, where it reports 6 ERRORs including the
+    three live-machine sites v4.1 fixed. These tests keep it that way.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.g = build_analysis(ROOT).g
+
+    def _lib_sites(self):
+        for fn in self.g.functions.values():
+            if fn.unit != "lib":
+                continue
+            for site in fn.dis_sites:
+                yield fn, site
+
+    def test_every_live_machine_dis_write_is_atomic(self):
+        torn = [f"{fn.name}:{site[3]}"
+                for fn, site in self._lib_sites()
+                if not site[4] and not fn.dis_exempt]
+        self.assertEqual(torn, [],
+                         "torn DIS pair(s) in the library -- the field and its "
+                         "shadow are separately observable")
+
+    def test_the_three_live_writers_use_dis_assign(self):
+        by_fn = {}
+        for fn, site in self._lib_sites():
+            by_fn.setdefault(fn.name, set()).add(site[0])
+        for name in ("sm_execute_transition", "SM_Reset", "SM_Error_Report"):
+            self.assertIn(name, by_fn, f"{name} no longer writes a DIS pair")
+            self.assertEqual(by_fn[name], {"SM_DIS_ASSIGN"},
+                             f"{name} must write its DIS pair indivisibly")
+
+    def test_only_construction_is_exempt(self):
+        exempt = {fn.name for fn, _ in self._lib_sites() if fn.dis_exempt}
+        self.assertEqual(exempt, {"SM_Init_"},
+                         "only instance construction may write a DIS pair "
+                         "non-atomically; anything else needs a real reason")
+
+    def test_exemptions_carry_a_stated_reason(self):
+        for fn, _ in self._lib_sites():
+            if fn.dis_exempt:
+                self.assertGreater(len(fn.dis_exempt), 20,
+                                   f"{fn.name}: exemption without a rationale")
+
+
 class MetricsTests(unittest.TestCase):
     def test_algorithms_on_toy_graph(self):
         adj = {"a": {"b"}, "b": {"c"}, "c": {"a"}, "d": {"a"}, "e": set()}

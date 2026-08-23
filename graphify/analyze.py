@@ -108,6 +108,11 @@ class Function:
     invokes_roles: set[str] = field(default_factory=set)     # callback roles
     crit_spans: list[tuple[int, int]] = field(default_factory=list)
     unprotected_volatile: set[str] = field(default_factory=set)  # writes
+    # DIS (D7) pair write sites -- see _extract_dis_sites and G16.
+    # (kind, field_expr, dis_expr, line, protected)
+    dis_sites: list[tuple[str, str, str, int, bool]] = \
+        field(default_factory=list)
+    dis_exempt: str = ""             # rationale if the body opts out of G16
     decl: str | None = None         # key of the declaration it implements
     overrides: str | None = None    # key of the weak definition it replaces
 
@@ -561,6 +566,66 @@ def _extract_accesses(fn: Function, body: str, g: Graph,
             struct = nxt
 
 
+DIS_WRITE_RE = re.compile(r"\b(SM_DIS_ASSIGN|SM_DIS_UPDATE)\s*\(")
+
+#: A body carrying this marker in a comment opts its DIS sites out of G16.
+#: Written as a marker rather than a hardcoded function name, so the exemption
+#: lives next to the code it excuses and travels with it. Exempt sites are
+#: still reported (as INFO), so an exemption cannot hide a defect.
+DIS_EXEMPT_MARKER = "DIS-ATOMIC-EXEMPT:"
+
+
+def _extract_dis_sites(fn: Function, body: str, body_start_line: int,
+                       raw_body: str) -> None:
+    """Record every write to a DIS field/shadow pair (D7), and whether the
+    pair is written indivisibly.
+
+    There are two ways to write a pair:
+
+      SM_DIS_ASSIGN(f, d, t, v)      -- takes the critical section itself, so
+                                        it is atomic wherever it appears.
+      f = v; SM_DIS_UPDATE(f, d, t)  -- two separate stores. Indivisible only
+                                        if both fall inside one critical
+                                        section.
+
+    The second form is what G16 polices. An SM_DIS_UPDATE outside any critical
+    section means the field and its shadow are separately observable: an ISR
+    calling a documented ISR-safe reader in between sees a field that no longer
+    matches its shadow and asserts on healthy data. That is finding 1.2.
+
+    This is a property of the code's shape, not of any particular execution,
+    which is why it is checked statically. A boundary-injected ISR in a runtime
+    harness cannot land between two adjacent non-critical stores -- there is no
+    seam there to fire in -- so it would report "no tear" against the very code
+    that has one (brief F-C).
+    """
+    marker = raw_body.find(DIS_EXEMPT_MARKER)
+    if marker >= 0:
+        # The rationale runs to the end of the enclosing comment, not to the
+        # end of its first line -- a one-line cap silently truncated real
+        # reasons mid-sentence, which is worse than having none.
+        tail = raw_body[marker + len(DIS_EXEMPT_MARKER):]
+        stop = tail.find("*/")
+        if stop < 0:
+            stop = len(tail)
+        lines = [ln.strip().lstrip("*").strip()
+                 for ln in tail[:stop].split(chr(10))]
+        fn.dis_exempt = " ".join(" ".join(lines).split())
+
+    for m in DIS_WRITE_RE.finditer(body):
+        macro = m.group(1)
+        end = match_paren(body, m.end() - 1)
+        args = split_args(body[m.end():end - 1])
+        if len(args) < 2:
+            continue
+        field_expr = " ".join(args[0].split())
+        dis_expr = " ".join(args[1].split())
+        line = body_start_line + body.count(chr(10), 0, m.start())
+        protected = (macro == "SM_DIS_ASSIGN" or
+                     _in_spans(fn.crit_spans, m.start()))
+        fn.dis_sites.append((macro, field_expr, dis_expr, line, protected))
+
+
 def _extract_assertions(fn: Function, body: str, body_start_line: int,
                         module: str, g: Graph) -> None:
     for m in ASSERT_RE.finditer(body):
@@ -620,7 +685,9 @@ def _in_spans(spans: list[tuple[int, int]], pos: int) -> bool:
 
 def build_graph(root: Path) -> Graph:
     g = Graph(functions={}, includes={}, files=[])
-    bodies: list[tuple[str, str, int]] = []   # (key, body, body_start_line)
+    # (key, body, body_start_line, raw_body). raw_body keeps comments:
+    # strip_noise is length-preserving, so one extent slices both.
+    bodies: list[tuple[str, str, int, str]] = []
     texts: dict[str, str] = {}
 
     for path in _scan_files(root):
@@ -683,7 +750,8 @@ def build_graph(root: Path) -> Graph:
             body = text[extent[0]:extent[1]]
             fn.body_lines = body.count("\n") + 1
             g.functions[fn.key] = fn
-            bodies.append((fn.key, body, line_of(text, extent[0])))
+            bodies.append((fn.key, body, line_of(text, extent[0]),
+                           raw[extent[0]:extent[1]]))
 
     # Declarations ↔ definitions, weak ↔ override
     for fn in g.functions.values():
@@ -707,7 +775,7 @@ def build_graph(root: Path) -> Graph:
     type_names = set(g.types)
     decl_re = _decl_regex(g)
 
-    for key, body, body_line in bodies:
+    for key, body, body_line, raw_body in bodies:
         fn = g.functions[key]
         for callee, in_crit in _scan_calls(fn, body):
             if callee == fn.name:
@@ -733,6 +801,7 @@ def build_graph(root: Path) -> Graph:
             fn.invokes_roles.add(rm.group(1))
         _extract_accesses(fn, body, g, decl_re)
         _extract_assertions(fn, body, body_line, fn.module, g)
+        _extract_dis_sites(fn, body, body_line, raw_body)
         idents = set(IDENT_RE.findall(body)) | set(IDENT_RE.findall(fn.params))
         for tok in idents & config_names:
             fn.uses_config.add(tok)
