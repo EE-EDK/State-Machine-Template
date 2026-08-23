@@ -11,7 +11,8 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from graphify.analyze import build_graph
+from graphify.analyze import (ISR_SAFE_RE, ISR_UNSAFE_RE,
+                              build_graph)
 from graphify.cparse import gate_lines, split_args, strip_noise
 
 
@@ -486,3 +487,93 @@ class DisAtomicityTests(unittest.TestCase):
         self.assertNotEqual(self._sites(g, "excused").dis_exempt, "")
         self.assertEqual(self._sites(g, "not_excused").dis_exempt, "",
                          "an exemption is scoped to the body that states it")
+
+
+class IsrContractPrecisionTests(unittest.TestCase):
+    """A doc comment STATES an ISR contract; it does not merely mention one.
+
+    Found by tests/test_isr_interleave.c, whose comment reads "SM_TimeEvt_Arm
+    is documented ISR-safe" while describing a test. graphify read that as the
+    test declaring ITSELF ISR-safe and warned (G5) that it calls SM_Process.
+    Three prose mentions in the shipped headers have the same shape, so the
+    imprecision was latent rather than novel -- rewording the test comment
+    would have hidden it instead of fixing it.
+
+    The rule: a contract leads a line (after the comment opener and an
+    optional doc tag) or is parenthetical. Mid-sentence is prose.
+    """
+
+    CONTRACTS = [
+        ("multi-line, line-leading", """
+/**
+ * ISR-SAFE: uses critical sections.
+ */""", "safe"),
+        ("single-line", "/** ISR-SAFE: may be called from interrupts. */",
+         "safe"),
+        ("parenthetical in @brief",
+         """
+/**
+ * @brief Check if critical error lock is active (ISR-safe)
+ */""", "safe"),
+        ("line-leading negative", """
+/**
+ * NOT ISR-safe -- call only from state callbacks or SM_Process context.
+ */""", "unsafe"),
+    ]
+
+    PROSE = [
+        ("@brief describing a buffer", """
+/**
+ * @brief Size of the ISR-safe event ring buffer
+ */"""),
+        ("mid-sentence in a rationale", """
+/**
+ * in which a reader -- including the ISR-safe readers that verify the pair,
+ */"""),
+        ("field trailing comment",
+         "/**< Current state index (volatile for ISR-safe reads) */"),
+        ("naming another function's contract",
+         "/* SM_TimeEvt_Arm is documented ISR-safe. Arming a timer... */"),
+    ]
+
+    def test_stated_contracts_are_recognised(self):
+        for label, doc, want in self.CONTRACTS:
+            rx = ISR_UNSAFE_RE if want == "unsafe" else ISR_SAFE_RE
+            self.assertIsNotNone(rx.search(doc), f"lost contract: {label}")
+
+    def test_prose_mentions_are_not_contracts(self):
+        for label, doc in self.PROSE:
+            self.assertIsNone(ISR_SAFE_RE.search(doc), f"prose read as safe: {label}")
+            self.assertIsNone(ISR_UNSAFE_RE.search(doc),
+                              f"prose read as unsafe: {label}")
+
+    def test_unsafe_wins_over_safe_in_the_same_doc(self):
+        doc = """
+/**
+ * NOT ISR-safe.
+ * ISR-SAFE: this line contradicts the one above.
+ */"""
+        self.assertIsNotNone(ISR_UNSAFE_RE.search(doc))
+
+    def test_a_comment_about_another_function_does_not_contract_this_one(self):
+        g = build_graph(_repo({
+            "include/p.h": """
+                #ifndef P_H
+                #define P_H
+                typedef struct SM_Context SM_Context_t;
+                typedef SM_Context_t *SM_Handle_t;
+                #endif
+            """,
+            "tests/test_p.c": """
+                #include "p.h"
+                /* SM_PostEvent is documented ISR-safe; this test is not. */
+                void probe(SM_Handle_t sm) { (void)sm; }
+                /** ISR-SAFE: reads a volatile word. */
+                void real_isr_api(SM_Handle_t sm) { (void)sm; }
+            """,
+        }))
+        fns = {f.name: f for f in g.functions.values()}
+        self.assertEqual(fns["probe"].isr, "",
+                         "a comment naming another function's contract must "
+                         "not become this function's contract")
+        self.assertEqual(fns["real_isr_api"].isr, "safe")

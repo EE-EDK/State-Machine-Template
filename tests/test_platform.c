@@ -76,8 +76,71 @@ bool SM_Platform_IsTimeout(uint32_t start, uint32_t timeout_ms)
 
 static uint32_t critical_nesting = 0U;
 
+/* --- ISR interleaving harness (W2a). Limits are documented in test_common.h;
+ * in particular this cannot observe a torn DIS pair -- see G16. ----------- */
+
+static test_isr_hook_t s_isr_hook = NULL;
+static bool s_isr_in_critsec = false;
+static bool s_isr_running = false;      /* re-entrancy guard */
+static uint32_t s_isr_fires = 0U;
+static uint32_t s_isr_budget = 0xFFFFFFFFU;
+
+void test_isr_hook_set(test_isr_hook_t h, bool fire_inside_critsec)
+{
+    s_isr_hook = h;
+    s_isr_in_critsec = fire_inside_critsec;
+    s_isr_running = false;
+    s_isr_fires = 0U;
+    s_isr_budget = 0xFFFFFFFFU;
+}
+
+void test_isr_hook_clear(void)
+{
+    s_isr_hook = NULL;
+    s_isr_in_critsec = false;
+    s_isr_running = false;
+    s_isr_fires = 0U;
+    s_isr_budget = 0xFFFFFFFFU;
+}
+
+uint32_t test_isr_hook_fire_count(void)
+{
+    return s_isr_fires;
+}
+
+void test_isr_hook_limit(uint32_t n)
+{
+    s_isr_budget = n;
+}
+
+static void isr_fire(int phase)
+{
+    test_isr_hook_t h = s_isr_hook;
+
+    if (h == NULL || s_isr_running || s_isr_budget == 0U) {
+        return;
+    }
+    /* nesting > 0 is the NMI / second-core model, not the documented one. */
+    if (phase == SM_TEST_ISR_IN_CRITSEC && !s_isr_in_critsec) {
+        return;
+    }
+    s_isr_running = true;
+    s_isr_fires++;
+    if (s_isr_budget != 0xFFFFFFFFU) {
+        s_isr_budget--;
+    }
+    h(phase, critical_nesting);
+    s_isr_running = false;
+}
+
 void SM_Platform_EnterCritical(void)
 {
+    /* An interrupt can land right up to the instruction that masks them. */
+    if (critical_nesting == 0U) {
+        isr_fire(SM_TEST_ISR_PRE_ENTER);
+    } else {
+        isr_fire(SM_TEST_ISR_IN_CRITSEC);
+    }
     critical_nesting++;
 }
 
@@ -85,6 +148,12 @@ void SM_Platform_ExitCritical(void)
 {
     if (critical_nesting > 0U) {
         critical_nesting--;
+    }
+    /* ...and again from the instruction that unmasks them onward. */
+    if (critical_nesting == 0U) {
+        isr_fire(SM_TEST_ISR_POST_EXIT);
+    } else {
+        isr_fire(SM_TEST_ISR_IN_CRITSEC);
     }
 }
 

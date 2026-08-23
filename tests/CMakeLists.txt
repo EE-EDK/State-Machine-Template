@@ -100,6 +100,7 @@ add_sm_test(test_integration  test_integration.c)
 # -----------------------------------------------------------------------------
 
 add_sm_test(test_abi_guard  test_abi_guard.c)
+add_sm_test(test_isr_interleave test_isr_interleave.c)
 
 add_executable(test_abi_guard_mismatch test_abi_guard.c)
 target_link_libraries(test_abi_guard_mismatch PRIVATE sm_framework_test unity_lib)

@@ -49,9 +49,19 @@ ASSERT_ID_ARG = {"SM_REQUIRE": 0, "SM_ASSERT_ID": 0, "SM_INVARIANT": 0,
                  "SM_DIS_VERIFY": 3, "SM_BOUNDED_LOOP_BEGIN": 2,
                  "SM_BOUNDED_LOOP_END": 2}
 CRIT_ENTER, CRIT_EXIT = "SM_Platform_EnterCritical", "SM_Platform_ExitCritical"
-ISR_SAFE_RE = re.compile(r"\bISR[- ]SAFE\b", re.IGNORECASE)
+#: A doc comment states an ISR contract when the phrase LEADS a line
+#: ("* ISR-SAFE: uses critical sections") or is parenthetical
+#: ("@brief ... (ISR-safe)"). A mid-sentence mention is prose about some
+#: other symbol -- "the ISR-safe readers that verify the pair" does not
+#: make the enclosing function ISR-safe, and reading it that way produced
+#: a false G5 warning the first time a test comment named another
+#: function's contract.
+_ISR_LEAD = r"(?:(?:^|\n)\s*(?:/?\*+\s*)?(?:@\w+\s+)?|\(\s*)"
+
+ISR_SAFE_RE = re.compile(_ISR_LEAD + r"ISR[- ]SAFE\b", re.IGNORECASE)
 ISR_UNSAFE_RE = re.compile(
-    r"\b(NOT\s+ISR[- ]safe|non-ISR-safe|Do not call from ISR|"
+    _ISR_LEAD +
+    r"(NOT\s+ISR[- ]safe|non-ISR-safe|Do not call from ISR|"
     r"never from an interrupt|not from ISR|only from (?:state callbacks|"
     r"boot))", re.IGNORECASE)
 ACCESS_RE = re.compile(

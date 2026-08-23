@@ -193,6 +193,35 @@ detector shown to fire on the known-bad revision. The runtime harness (W2a)
 remains outstanding and covers the *dynamic* claims only — queue index races,
 watermark, timer-list integrity during tick, recall-vs-post.
 
+**W2a (D21).** Runtime ISR-interleaving harness in `tests/test_platform.c` +
+`test_common.h` + `tests/test_isr_interleave.c` — **zero production source
+edits**, verified by diff. A hook fires at critical-section boundaries; by
+default only at `nesting == 0`, because on one core an interrupt cannot run
+inside a critical section. An opt-in in-critsec mode models an NMI or a second
+core and is labelled as a different contract. 12 cases: what an ISR observes
+during a drain, queue index/watermark consistency under injected posts, timer
+list integrity across an injected arm and disarm mid-tick, recall-vs-post.
+
+**The harness's own limits are the important part**, and are written into the
+file header rather than only the commit message: it fires at instrumented
+points, not arbitrary instruction boundaries; it models one core with no
+reordering; and **it cannot observe a torn DIS pair**. That last was
+[DERIVED] in the brief and is now **measured**: the harness was run against
+`9427166~1`, the pre-DIS-fix engine that G16 flags with 6 ERRORs, and **all 12
+cases pass**. It gives genuinely torn code a clean bill of health. Never cite a
+green run here as evidence about DIS atomicity — that is G16's job.
+
+Two things the harness found on its own: `SM_PostEvent`'s documented TOCTOU
+hazard, demonstrated rather than asserted (an ISR that floods the queue at the
+seam inside `SM_PostEvent` makes the task-context post correctly return false);
+and a **graphify precision bug** — `_isr_contract` matched the phrase
+"ISR-safe" anywhere in a doc comment, so a test comment naming *another*
+function's contract made the test itself ISR-safe and raised a false G5. Three
+prose mentions in the shipped headers had the same shape, so it was latent, not
+novel. Rewording the test would have laundered it; the rule is now that a
+contract leads a line or is parenthetical, pinned by 4 tests, with the declared
+contract table verified byte-identical before and after.
+
 **Correction carried forward** (from the brief, verified this session): the 8
 remaining G-check WARNs are **7 × G7-untested-api + 1 × G10**, not "seven HAL
 stubs". `App_Main_GetVersion` is not HAL, and `SM_Platform_OutputSend` *is*
