@@ -233,11 +233,20 @@ SM_FlushDeferred(sm);
 
 ## Error Handling
 
-Three-tier system: MINOR (auto-recover), NORMAL (managed), CRITICAL (system lock).
+Two enforced tiers and one informational: MINOR (recorded and queryable -- the framework takes no action, you decide what a minor error means), NORMAL (managed), CRITICAL (system lock).
 
 ```c
 /* Report errors */
-SM_Error_Report(sm, SM_ERROR_MINOR, 0x01);     /* auto-recovery */
+SM_Error_Report(sm, SM_ERROR_MINOR, 0x01);     /* recorded only */
+
+/* MINOR is yours to act on. The framework stores the flag and the time; the
+ * policy -- retry, degrade, escalate, ignore -- is the application's. */
+uint32_t since;
+if (SM_Error_IsMinorActive(sm) && SM_Error_GetMinorTimestamp(sm, &since)) {
+    if ((SM_Platform_GetTimeMs() - since) > 500U) {
+        SM_Error_ClearMinor(sm);   /* leaves any current error record intact */
+    }
+}
 SM_Error_Report(sm, SM_ERROR_NORMAL, 0x10);    /* managed recovery */
 SM_Error_Report(sm, SM_ERROR_CRITICAL, 0xFF);  /* system lock, requires reset */
 

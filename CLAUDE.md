@@ -13,7 +13,7 @@ state-machine-template/
 │   ├── sm_safety.h         # Safety macros: SM_DEFINE_MODULE, SM_REQUIRE, DIS, bounded loops
 │   ├── sm_platform.h       # HAL interface: timing, critsec, watchdog, sleep, NVS, reset, capabilities
 │   ├── sm_engine.h         # Core API: SM_Init, SM_Process, SM_PostEvent, time/deferred events
-│   ├── sm_error.h          # Error API: 3-tier report/recover/history/stats, DIS on critical_lock
+│   ├── sm_error.h          # Error API: report/recover/history/stats, MINOR accessors (D18), DIS on critical_lock
 │   └── sm_debug.h          # Debug API: SM_LOG_*, per-module tags, runtime level control
 ├── src/
 │   ├── core/
@@ -60,7 +60,7 @@ state-machine-template/
 │   ├── test_engine.c           # 21 tests: init, process, guards, timeout, dwell, history
 │   ├── test_time_events.c      # 15 tests: arm, disarm, one-shot, periodic, multi-timer
 │   ├── test_deferred.c         # 10 tests: defer, recall FIFO-to-front, flush, capacity
-│   ├── test_error.c            # 18 tests: 3-tier errors, DIS, stats, recovery
+│   ├── test_error.c            # 26 tests: error tiers, MINOR accessors, DIS, stats, recovery
 │   ├── test_debug.c            # 14 tests: levels, tags, periodic, hexdump
 │   ├── test_safety.c           # 11 tests: DIS corruption, bounded loops, SM_REQUIRE
 │   ├── test_hal.c              # 18 tests: critsec nesting, timeout wrap, capabilities
@@ -71,7 +71,9 @@ state-machine-template/
 │   ├── test_stats_bounds.c     # 11 tests: statistics contract and bounds
 │   └── test_*_null*.c, test_recovery_edges.c, test_reset_extras.c
 │                               # 10 tests each: NULL/edge contracts per subsystem
-│                               # (239 RUN_TEST cases total across 20 suites)
+│   ├── test_abi_guard.c        # 13 tests: SM_Init 105/106/107 + ABI mismatch reproduction
+│   ├── test_isr_interleave.c   # 12 tests: injected ISR at critical-section seams (W2a)
+│                               # (272 RUN_TEST cases across 22 suites; 26 ctest targets)
 ├── CMakeLists.txt          # Build system (cmake 3.15+, C99)
 ├── Quick-Guide.md          # v4.1 quick reference
 ├── MIGRATION.md            # v2→v3 migration guide
@@ -106,7 +108,7 @@ target_link_libraries(your_target sm_framework)
 - **Const flash transitions:** SM_Transition_t[] in ROM with guard conditions + actions
 - **Atomic transitions:** exit → action → state update → entry within one SM_Process call; deferred entry only for the initial state after SM_Init/SM_Reset
 - **Bounded drain:** SM_Process handles up to SM_MAX_EVENTS_PER_PROCESS events per call (default = SM_EVENT_QUEUE_SIZE); min_dwell re-checked per event against the then-current state
-- **3-tier errors:** MINOR (auto-recover), NORMAL (managed recovery), CRITICAL (system lock with DIS)
+- **Error tiers:** two enforced, one informational — MINOR (recorded and queryable via `SM_Error_IsMinorActive` / `GetMinorTimestamp` / `ClearMinor`; the framework takes no action of its own), NORMAL (managed recovery), CRITICAL (system lock with DIS)
 - **Time events:** ms deadline-based against SM_Platform_GetTimeMs (wrap-safe, < 2^31 ms), drift-free periodic with coalescing on stall, capacity enforced at Arm (returns bool), ticked BEFORE the drain so fires deliver same-cycle (SM_FEATURE_TIME_EVENTS)
 - **State timeout:** public SM_EVT_TIMEOUT event; latch set only on successful post (full queue retries next cycle); valid in SM_AddTransition
 - **Deferred events:** FIFO recall (oldest first) to the TRUE front of the main queue (displaces occupied front QP-postLIFO-style); on full main queue the event stays deferred (SM_FEATURE_DEFER)
@@ -127,7 +129,7 @@ See `docs_dev/task_plan.md` for full rationale. Key: D6 frontEvt, D7 DIS, D8 bou
 - `volatile` on ISR-shared data (current_state, event queue head/tail/count, critical_lock)
 - `extern "C"` guards for C++ compatibility
 - SM_WEAK disabled on PE/COFF (Windows/MinGW) — override via build system exclusion
-- Numeric assertion IDs: 100-199 init, 200-299 process, 300-399 time events, 400-499 deferred events, 500-599 event posting, 600-699 reset/lifecycle, 700-799 error handler
+- Numeric assertion IDs: 100-199 init, 200-299 process, 300-399 time events, 400-499 deferred events, 500-599 event posting, 600-699 reset/lifecycle, 700-749 error handler, 750-759 MINOR accessors, 800-899 debug
 
 ## What NOT to Do
 - Do not block in state callbacks (no delay/infinite loops)
@@ -221,6 +223,31 @@ prose mentions in the shipped headers had the same shape, so it was latent, not
 novel. Rewording the test would have laundered it; the rule is now that a
 contract leads a line or is parenthetical, pinned by 4 tests, with the declared
 contract table verified byte-identical before and after.
+
+**W3 (D18).** MINOR was documented as "auto-recovery" and implemented as two
+fields nothing read — `minor_active` had **no reader anywhere in the framework
+and no public accessor**, so an application could not have implemented the
+advertised behaviour even if it wanted to. The defect was the false promise,
+not the 8 bytes. Added `SM_Error_IsMinorActive` / `SM_Error_GetMinorTimestamp`
+/ `SM_Error_ClearMinor` (assertions 750–753); `ClearMinor` retires the flag
+*without* wiping the current error record, which is why it exists alongside
+`SM_Error_Clear`. **No framework auto-recovery** — every other recovery path
+here is already application-driven, and the framework cannot know what
+recovering from your minor error means. Re-documented at all six sites,
+including `error_recovery_example.c`, whose Phase 1 was **titled**
+"Auto-Recovery" while its body honestly cleared the error by hand. That example
+is the one whose stdout deliberately changed; the other five are still
+banner-only against the golden baseline.
+
+Detector proof: new API cannot fail against pre-W3 HEAD except by link error,
+which proves dependency, not detection — so the accessors were **mutated**
+(return false / return 0 / no-op) and 4 cases failed. The timestamp assertion
+was strengthened after noticing it passed at t=0 even if the field were never
+written; a weak assertion is worse than none, because it reads as coverage.
+
+**G8 earned its keep this item:** it flagged CLAUDE.md claiming `test_error.c`
+had 18 tests when the file had 26. Inventory corrected — 272 RUN_TEST cases
+across 22 suites, 26 ctest targets.
 
 **Correction carried forward** (from the brief, verified this session): the 8
 remaining G-check WARNs are **7 × G7-untested-api + 1 × G10**, not "seven HAL

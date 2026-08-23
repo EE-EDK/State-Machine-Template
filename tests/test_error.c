@@ -137,8 +137,10 @@ void test_report_minor_sets_minor_active_and_records_history(void)
     bool ok = SM_Error_Report(s_sm, SM_ERROR_MINOR, 0x0001U);
     TEST_ASSERT_TRUE(ok);
 
-    /* minor_active flag should be set */
-    TEST_ASSERT_TRUE(s_ctx.error.minor_active);
+    /* Public API since v4.2 (D18). One white-box read is kept below as a
+     * cross-check that the accessor reports the field and not a constant. */
+    TEST_ASSERT_TRUE(SM_Error_IsMinorActive(s_sm));
+    TEST_ASSERT_EQUAL(s_ctx.error.minor_active, SM_Error_IsMinorActive(s_sm));
 
     /* History count should be 1 */
     TEST_ASSERT_EQUAL_UINT8(1U, SM_Error_GetHistoryCount(s_sm));
@@ -266,7 +268,7 @@ void test_clear_resets_current_but_not_critical_lock(void)
     TEST_ASSERT_TRUE(s_ctx.error.critical_lock);
 
     /* minor_active should be cleared */
-    TEST_ASSERT_FALSE(s_ctx.error.minor_active);
+    TEST_ASSERT_FALSE(SM_Error_IsMinorActive(s_sm));
 }
 
 /* =============================================================================
@@ -642,11 +644,128 @@ void test_stats_accumulate_across_multiple_calls(void)
  * MAIN
  * ===========================================================================*/
 
+/* =============================================================================
+ * MINOR TIER ACCESSORS (v4.2, W3 / D18)
+ *
+ * The tier used to be documented as "auto-recovery" and implemented as two
+ * fields nothing read: minor_active had no reader anywhere in the framework
+ * and no public accessor, so an application could not have implemented the
+ * advertised behaviour even if it wanted to. D18 keeps the state and exposes
+ * it; the policy stays with the application.
+ * ===========================================================================*/
+
+void test_minor_accessors_report_the_reported_error(void)
+{
+    uint32_t at = 0xDEADBEEFU;
+
+    TEST_ASSERT_FALSE(SM_Error_IsMinorActive(s_sm));
+    TEST_ASSERT_FALSE(SM_Error_GetMinorTimestamp(s_sm, &at));
+    TEST_ASSERT_EQUAL_UINT32(0xDEADBEEFU, at);   /* untouched when inactive */
+
+    /* Advance the clock first. Reporting at t=0 would let this pass even if
+     * minor_timestamp were never written -- a weak assertion is worse than
+     * none, because it reads as coverage. */
+    for (uint32_t i = 0U; i < 5U; i++) {
+        SM_Platform_SimTick();
+    }
+    TEST_ASSERT_GREATER_THAN_UINT32(0U, SM_Platform_GetTimeMs());
+
+    TEST_ASSERT_TRUE(SM_Error_Report(s_sm, SM_ERROR_MINOR, 42U));
+
+    TEST_ASSERT_TRUE(SM_Error_IsMinorActive(s_sm));
+    TEST_ASSERT_TRUE(SM_Error_GetMinorTimestamp(s_sm, &at));
+    TEST_ASSERT_EQUAL_UINT32(SM_Platform_GetTimeMs(), at);
+    TEST_ASSERT_NOT_EQUAL_UINT32(0U, at);
+}
+
+/* ClearMinor retires the minor flag WITHOUT wiping the current error record --
+ * that distinction is the reason it exists alongside SM_Error_Clear. */
+void test_clear_minor_leaves_the_current_error_record(void)
+{
+    SM_ErrorInfo_t cur;
+
+    TEST_ASSERT_TRUE(SM_Error_Report(s_sm, SM_ERROR_MINOR, 7U));
+    TEST_ASSERT_TRUE(SM_Error_IsMinorActive(s_sm));
+
+    SM_Error_ClearMinor(s_sm);
+
+    TEST_ASSERT_FALSE(SM_Error_IsMinorActive(s_sm));
+    TEST_ASSERT_TRUE(SM_Error_GetCurrent(s_sm, &cur));
+    TEST_ASSERT_EQUAL_UINT16(7U, cur.code);
+    TEST_ASSERT_EQUAL(SM_ERROR_MINOR, cur.level);
+}
+
+/* SM_Error_Clear wipes both. */
+void test_error_clear_also_clears_minor(void)
+{
+    TEST_ASSERT_TRUE(SM_Error_Report(s_sm, SM_ERROR_MINOR, 7U));
+    SM_Error_Clear(s_sm);
+    TEST_ASSERT_FALSE(SM_Error_IsMinorActive(s_sm));
+}
+
+/* A more serious error supersedes an outstanding minor one. */
+void test_a_normal_error_retires_an_outstanding_minor(void)
+{
+    TEST_ASSERT_TRUE(SM_Error_Report(s_sm, SM_ERROR_MINOR, 1U));
+    TEST_ASSERT_TRUE(SM_Error_IsMinorActive(s_sm));
+
+    TEST_ASSERT_TRUE(SM_Error_Report(s_sm, SM_ERROR_NORMAL, 2U));
+    TEST_ASSERT_FALSE(SM_Error_IsMinorActive(s_sm));
+}
+
+void test_reset_retires_an_outstanding_minor(void)
+{
+    TEST_ASSERT_TRUE(SM_Error_Report(s_sm, SM_ERROR_MINOR, 1U));
+    SM_Reset(s_sm);
+    TEST_ASSERT_FALSE(SM_Error_IsMinorActive(s_sm));
+}
+
+/* Repeated ClearMinor must be harmless -- an application polling a policy will
+ * call it more than once. */
+void test_clear_minor_is_idempotent(void)
+{
+    SM_Error_ClearMinor(s_sm);
+    SM_Error_ClearMinor(s_sm);
+    TEST_ASSERT_FALSE(SM_Error_IsMinorActive(s_sm));
+}
+
+/* NULL contracts: assert and stay safe, matching every other error API. */
+void test_minor_accessors_reject_null_handle(void)
+{
+    uint32_t at = 0U;
+
+    TEST_EXPECT_ASSERT((void)SM_Error_IsMinorActive(NULL));
+    TEST_ASSERT_EQUAL_INT(750, test_assert_id);
+
+    test_assert_clear();
+    TEST_EXPECT_ASSERT((void)SM_Error_GetMinorTimestamp(NULL, &at));
+    TEST_ASSERT_EQUAL_INT(751, test_assert_id);
+
+    test_assert_clear();
+    TEST_EXPECT_ASSERT(SM_Error_ClearMinor(NULL));
+    TEST_ASSERT_EQUAL_INT(753, test_assert_id);
+}
+
+void test_get_minor_timestamp_rejects_null_out(void)
+{
+    TEST_ASSERT_TRUE(SM_Error_Report(s_sm, SM_ERROR_MINOR, 1U));
+    TEST_EXPECT_ASSERT((void)SM_Error_GetMinorTimestamp(s_sm, NULL));
+    TEST_ASSERT_EQUAL_INT(752, test_assert_id);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
 
     RUN_TEST(test_report_minor_sets_minor_active_and_records_history);
+    RUN_TEST(test_minor_accessors_report_the_reported_error);
+    RUN_TEST(test_clear_minor_leaves_the_current_error_record);
+    RUN_TEST(test_error_clear_also_clears_minor);
+    RUN_TEST(test_a_normal_error_retires_an_outstanding_minor);
+    RUN_TEST(test_reset_retires_an_outstanding_minor);
+    RUN_TEST(test_clear_minor_is_idempotent);
+    RUN_TEST(test_minor_accessors_reject_null_handle);
+    RUN_TEST(test_get_minor_timestamp_rejects_null_out);
     RUN_TEST(test_report_normal_records_history_and_sets_current);
     RUN_TEST(test_report_critical_sets_lock_and_dis);
     RUN_TEST(test_report_invalid_level_returns_false);

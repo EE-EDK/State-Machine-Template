@@ -266,10 +266,15 @@ int main(void)
     printf("\nCallbacks registered (recovery + notify)\n");
 
     /* =====================================================================
-     * Phase 1: MINOR Error -- Auto-Recovery
+     * Phase 1: MINOR Error -- recorded, application decides
+     *
+     * The framework takes no action of its own on a MINOR error: it records
+     * the error and stamps the time, and reading that state to decide what it
+     * means is the application's job (D18). This phase was titled
+     * "Auto-Recovery" through v4.1, which the code below never performed.
      * ===================================================================*/
 
-    print_phase(1, "Minor Error (Auto-Recovery)");
+    print_phase(1, "Minor Error (recorded -- application decides)");
 
     /* Run normally for 5 cycles */
     printf("\nRunning 5 normal cycles...\n");
@@ -282,9 +287,24 @@ int main(void)
     printf("\nReporting MINOR error (code 100)...\n");
     SM_Error_Report(sm, SM_ERROR_MINOR, 100U);
 
-    /* Minor errors are informational -- clear and continue */
-    printf("Clearing minor error...\n");
-    SM_Error_Clear(sm);
+    /* Read the state back -- this is the whole of what MINOR offers. */
+    {
+        uint32_t raised_at = 0U;
+        printf("  SM_Error_IsMinorActive     -> %s\n",
+               SM_Error_IsMinorActive(sm) ? "true" : "false");
+        if (SM_Error_GetMinorTimestamp(sm, &raised_at)) {
+            printf("  SM_Error_GetMinorTimestamp -> %lu ms\n",
+                   (unsigned long)raised_at);
+        }
+    }
+
+    /* A real policy would weigh that age against a threshold here.
+     * This example simply retires it. ClearMinor leaves the current
+     * error record alone; SM_Error_Clear would wipe that too. */
+    printf("Retiring minor error (SM_Error_ClearMinor)...\n");
+    SM_Error_ClearMinor(sm);
+    printf("  SM_Error_IsMinorActive     -> %s\n",
+           SM_Error_IsMinorActive(sm) ? "true" : "false");
 
     /* Run 3 more cycles to show normal operation resumes */
     printf("\nRunning 3 more cycles after clear...\n");

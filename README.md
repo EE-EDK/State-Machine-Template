@@ -15,7 +15,7 @@ v4.0 corrected the engine's execution semantics: strict-FIFO event delivery for 
 - **Const flash transitions** -- `SM_Transition_t[]` in ROM with optional guard conditions and transition actions
 - **Atomic transitions** -- exit → action → entry complete within one `SM_Process` call; observers never see a state before its entry ran
 - **Bounded event drain** -- up to `SM_MAX_EVENTS_PER_PROCESS` events per `SM_Process`, so chained sequences complete in one call with a hard WCET bound
-- **3-tier error handling** -- MINOR (auto-recover), NORMAL (managed recovery), CRITICAL (system lock with DIS protection)
+- **Error handling: two enforced tiers and one informational** -- MINOR (recorded and queryable; the application defines the policy), NORMAL (managed recovery), CRITICAL (system lock with DIS protection)
 - **Time events** -- millisecond deadline-based timers (wrap-safe, drift-free), one-shot or periodic, arm/disarm from any context, capacity enforced at arm
 - **State timeout** -- public `SM_EVT_TIMEOUT` event usable directly in transition tables
 - **Deferred events** -- defer/recall pattern; FIFO among deferred events, recalled to the true front of the main queue

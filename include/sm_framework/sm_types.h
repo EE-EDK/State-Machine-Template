@@ -290,13 +290,13 @@ typedef struct {
 /**
  * @brief Error severity levels (framework-defined)
  *
- * MINOR:    Auto-recovery, no state change
+ * MINOR:    Recorded and queryable; the application defines the policy
  * NORMAL:   Managed recovery, application handles
  * CRITICAL: System lock, requires reset
  */
 typedef enum {
     SM_ERROR_NONE = 0,        /**< No error */
-    SM_ERROR_MINOR,           /**< Minor -- auto-recovery */
+    SM_ERROR_MINOR,           /**< Minor -- recorded, application-driven */
     SM_ERROR_NORMAL,          /**< Normal -- managed recovery */
     SM_ERROR_CRITICAL,        /**< Critical -- system lock */
     SM_ERROR_LEVEL_COUNT      /**< Number of error levels (sentinel) */

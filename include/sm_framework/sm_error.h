@@ -1,13 +1,19 @@
 /**
  * @file sm_error.h
- * @brief Error handler API for State Machine Framework v4.1
- * @version 4.1.0
+ * @brief Error handler API for State Machine Framework v4.2
+ * @version 4.2.0
  * @date 2026-04-18
  *
  * @copyright Copyright (c) 2025-2026
  *
- * Three-tier error handling system:
- *   MINOR:    Auto-recovery, no state change required
+ * Two enforced tiers and one informational tier:
+ *   MINOR:    RECORDED AND QUERYABLE. The framework takes no action of its own
+ *             -- it does not know what recovering from your minor error would
+ *             mean. Poll SM_Error_IsMinorActive / SM_Error_GetMinorTimestamp
+ *             and apply your own policy; SM_Error_ClearMinor retires it.
+ *             (Before v4.2 this tier was documented as "auto-recovery". It
+ *             never was: the flag had no reader anywhere in the framework and
+ *             no public accessor. See MIGRATION.md v4.1 -> v4.2.)
  *   NORMAL:   Managed recovery, application drives recovery logic
  *   CRITICAL: System lock, requires hardware reset or watchdog
  *
@@ -40,7 +46,8 @@ extern "C" {
  *
  * Records the error in history and sets current error.
  * Behavior depends on level:
- *   MINOR:    Sets minor_active flag, application can auto-recover
+ *   MINOR:    Records the error and stamps the time. Nothing else -- the
+ *             application decides what, if anything, to do about it.
  *   NORMAL:   Sets current error, application should enter recovery
  *   CRITICAL: Sets critical_lock, system is locked
  *
@@ -68,6 +75,51 @@ void SM_Error_Clear(SM_Handle_t sm);
 /* =============================================================================
  * ERROR STATUS QUERIES
  * ===========================================================================*/
+
+/**
+ * @brief Is a MINOR error currently outstanding?
+ *
+ * MINOR is the informational tier: SM_Error_Report records it and stamps the
+ * time, and the framework does nothing further. This is how an application
+ * reads that state so it can apply its own policy -- retry, degrade, log, or
+ * ignore. Cleared by SM_Error_ClearMinor, by SM_Error_Clear, by reporting a
+ * NORMAL or CRITICAL error, and by SM_Reset.
+ *
+ * @param sm Handle to the state machine instance
+ * @return true if a MINOR error is outstanding; false if none, or sm is NULL
+ *
+ * @note NOT ISR-safe.
+ */
+bool SM_Error_IsMinorActive(SM_Handle_t sm);
+
+/**
+ * @brief When the outstanding MINOR error was reported
+ *
+ * The timestamp is what any time-based application policy needs -- "clear it
+ * after 500 ms", "escalate if it has been up for a second". The framework
+ * implements no such policy; it supplies the number.
+ *
+ * @param sm     Handle to the state machine instance
+ * @param out_ms Receives the SM_Platform_GetTimeMs value at which the MINOR
+ *               error was reported. Untouched when this returns false.
+ * @return true if a MINOR error is outstanding and out_ms was written
+ *
+ * @note NOT ISR-safe.
+ */
+bool SM_Error_GetMinorTimestamp(SM_Handle_t sm, uint32_t *out_ms);
+
+/**
+ * @brief Retire the outstanding MINOR error, leaving the current error record
+ *
+ * Distinct from SM_Error_Clear, which also wipes the current error. Use this
+ * when the application's minor-error policy has run its course but a NORMAL
+ * error is still being worked on.
+ *
+ * @param sm Handle to the state machine instance
+ *
+ * @note NOT ISR-safe.
+ */
+void SM_Error_ClearMinor(SM_Handle_t sm);
 
 /**
  * @brief Check if critical error lock is active (ISR-safe)

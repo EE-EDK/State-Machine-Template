@@ -16,6 +16,7 @@
  *   720-729  SM_Error_AttemptRecovery
  *   730-739  SM_Error_GetStats / SM_Error_GetHistory
  *   740-749  internal helpers
+ *   750-759  MINOR tier accessors (v4.2, D18)
  */
 
 #include "sm_framework/sm_framework.h"
@@ -137,6 +138,43 @@ void SM_Error_Clear(SM_Handle_t sm)
 /* =============================================================================
  * ERROR STATUS QUERIES
  * ===========================================================================*/
+
+bool SM_Error_IsMinorActive(SM_Handle_t sm)
+{
+    SM_REQUIRE(750, sm != NULL);
+
+    if (sm == NULL) {
+        return false;
+    }
+    return sm->error.minor_active;
+}
+
+bool SM_Error_GetMinorTimestamp(SM_Handle_t sm, uint32_t *out_ms)
+{
+    SM_REQUIRE(751, sm != NULL);
+    SM_REQUIRE(752, out_ms != NULL);
+
+    if (sm == NULL || out_ms == NULL) {
+        return false;
+    }
+    if (!sm->error.minor_active) {
+        return false;   /* out_ms deliberately untouched */
+    }
+    *out_ms = sm->error.minor_timestamp;
+    return true;
+}
+
+void SM_Error_ClearMinor(SM_Handle_t sm)
+{
+    SM_REQUIRE(753, sm != NULL);
+
+    if (sm == NULL) {
+        return;
+    }
+    sm->error.minor_active = false;
+    /* minor_timestamp is left alone: it is only meaningful while
+     * minor_active, and GetMinorTimestamp gates on that flag. */
+}
 
 bool SM_Error_IsCriticalLock(SM_Handle_t sm)
 {
