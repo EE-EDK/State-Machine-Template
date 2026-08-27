@@ -116,7 +116,7 @@ target_link_libraries(your_target sm_framework)
 - **Debug:** Per-module tags (16 max), runtime level enable/disable, compile-time stripping
 - **HAL:** Weak-symbol overrides for timing, critsec, watchdog, sleep, NVS, reset reason, capabilities
 - **HSM:** Optional hierarchical states (SM_FEATURE_HSM) with parent fallback
-- **Memory:** ~544 bytes RAM baseline, ~580 with defer queue
+- **Memory:** ~544 bytes RAM baseline (stale — measured 316 B on Cortex-M4 -Os, 2026-08-23; W6 will regenerate this from a size report), ~580 with defer queue
 
 ## Architecture Decisions (D1-D11)
 See `docs_dev/task_plan.md` for full rationale. Key: D6 frontEvt, D7 DIS, D8 bounded loops, D9 time events, D10 deferred events — all inspired by QP/C 8.1.4 review.

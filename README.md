@@ -1,4 +1,4 @@
-# State Machine Framework v4.1
+# State Machine Framework v4.2
 
 Production-grade, handle-based state machine framework for embedded C systems. State-agnostic, multi-instance, zero-heap, ISR-safe. Designed for bare-metal microcontrollers from Cortex-M0 to application processors, with a weak-symbol HAL that ports in minutes.
 
@@ -363,7 +363,7 @@ Examples are built when `-DBUILD_EXAMPLES=ON` is passed to CMake.
 
 | Configuration | RAM |
 |---------------|-----|
-| Baseline (no optional features) | ~544 bytes |
+| Baseline (no optional features) | ~544 bytes (stale — measured 316 B on Cortex-M4 -Os, 2026-08-23; W6 will regenerate this from a size report) |
 | With deferred events (`SM_FEATURE_DEFER=1`) | ~580 bytes |
 | With statistics (`SM_FEATURE_STATISTICS=1`) | +20 + 4*SM_STATE_COUNT bytes |
 
@@ -378,19 +378,7 @@ Optimize for constrained targets:
 
 ## Testing
 
-The framework includes 9 test suites built on [Unity](https://github.com/ThrowTheSwitch/Unity) v2.6.0 (fetched automatically via CMake `FetchContent`).
-
-| Suite | Tests | Coverage |
-|-------|-------|----------|
-| `test_event_queue` | 10 | frontEvt, ring buffer, watermark, delivery order |
-| `test_engine` | 21 | init, process, guards, timeout, dwell, history |
-| `test_time_events` | 15 | ms deadlines, one-shot, periodic, drift/coalescing, capacity |
-| `test_deferred` | 10 | defer, FIFO recall to true front, flush, capacity |
-| `test_error` | 18 | 3-tier errors, DIS, stats, recovery callbacks |
-| `test_debug` | 14 | levels, tags, periodic interval, hexdump |
-| `test_safety` | 11 | DIS corruption detection, bounded loops, SM_REQUIRE |
-| `test_hal` | 18 | critsec nesting, timeout wrap, capabilities |
-| `test_integration` | 6 | full lifecycle, cross-subsystem scenarios |
+The framework includes 272 `RUN_TEST` cases across 22 suites (23 test files under `tests/`; `test_platform.c` is a stub with no cases), built on [Unity](https://github.com/ThrowTheSwitch/Unity) v2.6.0 (fetched automatically via CMake `FetchContent`). Measured directly (`grep -c RUN_TEST tests/*.c`, 2026-08-27); see `CLAUDE.md`'s Directory Structure section for the full per-suite breakdown.
 
 Build and run:
 
@@ -408,7 +396,8 @@ MIT License. See [LICENSE](LICENSE).
 
 | Version | Date | Description |
 |---------|------|-------------|
-| **v4.1.0** | 2026-08-22 | Build-consistency release: `SM_EVT_TIMEOUT` is a fixed reserved id (0xFFFF) instead of `SM_EVENT_COUNT`, FSM dimensions set once per build and propagated to every target, `SM_Init` rejects a mismatched build, DIS field/shadow pairs written atomically, `SM_Reset` disarms the timer schedule, `SM_TimeEvt_Init` no longer truncates the timer list, `SM_DeferEvent` validates event ids. See MIGRATION.md |
+| **v4.2.0** | 2026-08-23 | Hardening release (W1-W3): `SM_ABI_FINGERPRINT` closes the remaining build-consistency holes across separately-compiled units, a runtime ISR-interleaving test harness validates critical-section seams (W2a), DIS write-atomicity (G16) proven against a known-bad revision via Graphify (W2b), and the MINOR error tier gains accessors while no longer claiming an auto-recovery it doesn't perform (W3). |
+| v4.1.0 | 2026-08-22 | Build-consistency release: `SM_EVT_TIMEOUT` is a fixed reserved id (0xFFFF) instead of `SM_EVENT_COUNT`, FSM dimensions set once per build and propagated to every target, `SM_Init` rejects a mismatched build, DIS field/shadow pairs written atomically, `SM_Reset` disarms the timer schedule, `SM_TimeEvt_Init` no longer truncates the timer list, `SM_DeferEvent` validates event ids. See MIGRATION.md |
 | **v4.0.0** | 2026-08-03 | Semantic correction release: strict-FIFO event delivery for all sources, atomic exit→action→entry transitions, bounded multi-event drain per SM_Process, millisecond deadline-based drift-free time events with enforced capacity, public SM_EVT_TIMEOUT, exact SM_EventQueueIsFull, true front-insert recall that preserves the event on a full queue. See MIGRATION.md |
 | v3.0.0 | 2026-04-18 | Complete rewrite: handle-based multi-instance, state-agnostic, QP/C patterns (frontEvt, DIS, time events, deferred events), 3-tier error handler, per-module debug tags, weak-symbol HAL with watchdog/sleep/NVS/capabilities, 118 unit tests |
 | v2.0.0 | 2025-12-30 | Modular rewrite: platform abstraction, CMake build, 10 pre-configured states |
