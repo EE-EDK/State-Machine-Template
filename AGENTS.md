@@ -10,12 +10,11 @@ Read project docs in this order (load only what the task needs):
 1. **`GROK.md`** — Grok execution context and project mandates (**read first in Grok sessions**)
 2. **`AGENTS.md`** — this startup brief
 3. **`CLAUDE.md`** — build commands, directory structure, conventions
-4. **`GEMINI.md`** — governance mandates (overrides CLAUDE within the same directory tier)
 
 Load only what is scoped to this project; do **not** import sibling project context.
 
 
-**Doc precedence (same tier):** `GROK.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`
+**Doc precedence (same tier):** `GROK.md` → `AGENTS.md` → `CLAUDE.md`
 
 ## Project Identity
 
